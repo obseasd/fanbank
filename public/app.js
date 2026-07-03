@@ -262,12 +262,31 @@ async function refreshStats () {
   } catch { /* keep previous */ }
 }
 
-/* ─── Custom dropdown, position: fixed so panel escapes clipping ─── */
+/* ─── Custom dropdown ───
+ *
+ * The panel is portaled to document.body on init so it lives outside any
+ * ancestor stacking context. Panels inside cards with backdrop-filter
+ * blur were being clipped and rendered under the following section, even
+ * with position: fixed + z-index: 200, because backdrop-filter (like
+ * transform / filter) creates a new stacking context that traps fixed
+ * descendants. Portaling escapes that entirely.
+ */
 function initDropdown (root, options, onChange, { placeholder, defaultValue } = {}) {
   const btn = root.querySelector('.dd-btn')
-  const panel = root.querySelector('.dd-panel')
   const cur = root.querySelector('.dd-current')
+
+  // Take ownership of the panel and move it under document.body. From now
+  // on the panel is a global overlay; the parent .dropdown only tracks
+  // "open" state via a CSS class and positions the panel from JS.
+  const originalPanel = root.querySelector('.dd-panel')
+  const panel = document.createElement('div')
+  panel.className = 'dd-panel dd-panel-portal'
+  panel.setAttribute('role', 'listbox')
+  originalPanel?.remove()
+  document.body.appendChild(panel)
+
   let current = null
+  let isOpen = false
 
   function positionPanel () {
     const rect = btn.getBoundingClientRect()
@@ -299,32 +318,40 @@ function initDropdown (root, options, onChange, { placeholder, defaultValue } = 
         <span>${opt.label}</span>
       `
     }
-    root.classList.remove('open')
+    close()
     onChange && onChange(value, opt)
   }
+  function open () {
+    // Close every other dropdown first so only one is ever visible.
+    for (const other of document.querySelectorAll('.dropdown.open')) {
+      if (other !== root) other._closeDD?.()
+    }
+    render()
+    positionPanel()
+    root.classList.add('open')
+    panel.classList.add('open')
+    isOpen = true
+  }
+  function close () {
+    root.classList.remove('open')
+    panel.classList.remove('open')
+    isOpen = false
+  }
+  root._closeDD = close
 
   cur.textContent = placeholder || 'Pick one'
-  render()
 
   btn.addEventListener('click', e => {
     e.stopPropagation()
-    // Close other dropdowns
-    $$('.dropdown.open').forEach(d => { if (d !== root) d.classList.remove('open') })
-    if (root.classList.contains('open')) {
-      root.classList.remove('open')
-    } else {
-      render()
-      positionPanel()
-      root.classList.add('open')
-    }
+    if (isOpen) close(); else open()
   })
   document.addEventListener('click', e => {
-    if (root.classList.contains('open') && !panel.contains(e.target) && !btn.contains(e.target)) {
-      root.classList.remove('open')
-    }
+    if (!isOpen) return
+    if (panel.contains(e.target) || btn.contains(e.target)) return
+    close()
   })
-  window.addEventListener('scroll', () => { if (root.classList.contains('open')) positionPanel() }, true)
-  window.addEventListener('resize', () => { if (root.classList.contains('open')) positionPanel() })
+  window.addEventListener('scroll', () => { if (isOpen) positionPanel() }, true)
+  window.addEventListener('resize', () => { if (isOpen) positionPanel() })
 
   if (defaultValue !== undefined) select(defaultValue)
   return { select, getValue: () => current }

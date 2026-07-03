@@ -613,6 +613,11 @@ section, header, footer, main { position: relative; z-index: 1; }
   gap: 10px;
 }
 .dd-current img { width: 18px; height: 13px; border-radius: 2px; object-fit: cover; }
+/* Panels are portaled to document.body so they escape ancestor stacking
+ * contexts (backdrop-filter on .panel was trapping them otherwise). Kept
+ * as .dd-panel + a .dd-panel-portal marker; open state lives on the panel
+ * itself as well as on the .dropdown so the CSS still works either side.
+ */
 .dd-panel {
   position: fixed;
   padding: 8px;
@@ -623,10 +628,12 @@ section, header, footer, main { position: relative; z-index: 1; }
   backdrop-filter: blur(20px);
   max-height: 320px;
   overflow-y: auto;
-  z-index: 200;
+  z-index: 300;
   display: none;
+  min-width: 220px;
 }
-.dropdown.open .dd-panel { display: block; }
+.dropdown.open .dd-panel,
+.dd-panel.open { display: block; }
 .dd-item {
   padding: 10px 12px;
   border-radius: var(--radius-sm);
