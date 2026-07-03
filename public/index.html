@@ -7,6 +7,8 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%E2%9A%BD%3C/text%3E%3C/svg%3E">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/public/style.css" />
+  <!-- ethers UMD for client-side signing via injected wallet -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js" integrity="sha512-AbSbBn8HpQFiVCkGa4TVKGwCoVaCf1c0fCVwLGH2FbCXfl35SdKfEQiHwGZ7dbwzoNKCu2FLvzoTz36LGRdKMg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 </head>
 <body>
   <!-- ─── NAV ─── -->
@@ -26,7 +28,7 @@
     </a>
     <nav class="nav-links">
       <a href="#how">How it works</a>
-      <a href="#teams">Teams</a>
+      <a href="#teams">Play</a>
       <a href="#markets">Markets</a>
       <a href="#audit">Audit</a>
     </nav>
@@ -40,38 +42,33 @@
   <section id="top" class="hero">
     <div class="hero-inner">
       <div class="hero-copy">
-        <div class="hero-eyebrow">
-          <span class="badge-live">
-            <span class="pulse"></span>
-            Live on Sepolia
-          </span>
-          <span class="badge-hackathon">Built for the Tether Developers Cup</span>
-        </div>
         <h1>
-          Tip your team. Pool with your section.<br />
-          <span class="accent">Bet the match, all in USDt.</span>
+          Turn being a fan<br />
+          <span class="accent">into a real economy.</span>
         </h1>
         <p class="lead">
-          FanBank turns being a fan into a real economy. Send a tip to your national
-          team in one click, rally your section around a shared pool, back your gut
-          on the next quarter-final. Everything settles in USDt on the Tether stack,
-          you hold your own keys, no app in the middle.
+          FanBank is a self-custodial layer for football fans, built on the
+          Tether stack. Send USDt tips straight to your team's on-chain
+          address, rally your section into a shared pool with a chosen
+          payout policy, and back your gut on the next match through
+          parimutuel prediction markets. Every move settles on chain, in
+          USDt, from your own wallet.
         </p>
         <div class="hero-cta">
-          <button id="hero-cta-primary" class="btn primary lg">
-            <span>Get started</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          <button id="hero-connect" class="btn primary lg">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            <span>Connect wallet</span>
           </button>
           <a href="#how" class="btn ghost lg">See how it works</a>
         </div>
         <div class="hero-trust">
           <span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>
-            Self-custodial via Tether WDK
+            Self-custodial, you sign every tx
           </span>
           <span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-            Every USDt tx on chain
+            Native USDt, no bridges
           </span>
           <span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
@@ -79,29 +76,6 @@
           </span>
         </div>
       </div>
-
-      <!-- Hero side card: live wallet snapshot -->
-      <aside class="hero-side">
-        <div class="mini-card">
-          <div class="mini-header">
-            <span class="mini-title">Your wallet</span>
-            <span class="mini-badge" id="mini-wallet-badge">demo mode</span>
-          </div>
-          <div class="mini-usdt">
-            <span class="mini-usdt-value" id="mini-usdt">— USDt</span>
-            <span class="mini-usdt-sub" id="mini-address">no address yet</span>
-          </div>
-          <div class="mini-actions">
-            <button class="btn secondary sm" id="mini-copy">Copy address</button>
-            <a id="mini-explorer" class="btn ghost sm" target="_blank" rel="noopener">On Etherscan ↗</a>
-          </div>
-          <div class="mini-footer">
-            Signs from a BIP-39 seed loaded via
-            <a href="https://wdk.tether.io" target="_blank" rel="noopener">Tether WDK</a>.
-            The seed never leaves your device.
-          </div>
-        </div>
-      </aside>
     </div>
   </section>
 
@@ -112,7 +86,7 @@
       <div class="stat-label">Tips sent</div>
     </div>
     <div class="stat">
-      <div class="stat-value" id="stat-tip-vol">0 USDt</div>
+      <div class="stat-value" id="stat-tip-vol">0.00 USDt</div>
       <div class="stat-label">Tip volume</div>
     </div>
     <div class="stat">
@@ -120,7 +94,7 @@
       <div class="stat-label">Bets placed</div>
     </div>
     <div class="stat">
-      <div class="stat-value" id="stat-bet-vol">0 USDt</div>
+      <div class="stat-value" id="stat-bet-vol">0.00 USDt</div>
       <div class="stat-label">Bet volume</div>
     </div>
   </section>
@@ -130,7 +104,7 @@
     <div class="section-head">
       <span class="section-eyebrow">01 — 02 — 03</span>
       <h2>Three moves. That's the app.</h2>
-      <p>Everything below signs from your own wallet. No custodian holds your USDt, no server sees your seed. Judges and users can audit every tx from the journal at the bottom of the page.</p>
+      <p>Everything below signs from your own wallet. No custodian holds your USDt, no server sees your seed. Judges and users can audit every transaction from the journal at the bottom of the page.</p>
     </div>
     <div class="how-grid">
       <div class="how-card">
@@ -142,7 +116,7 @@
           </svg>
         </div>
         <h3>Tip a team or a player</h3>
-        <p>Pick a national team from the picker, choose an amount, one signed USDt transfer goes straight to their tip address. No intermediary, no bridge.</p>
+        <p>Pick a national team from the picker, choose an amount, one signed USDt transfer goes straight to their on-chain tip address. No intermediary, no bridge.</p>
       </div>
       <div class="how-card">
         <div class="how-idx">02</div>
@@ -175,7 +149,7 @@
     <div class="section-head">
       <span class="section-eyebrow">Play</span>
       <h2>Send a tip. Rally a pool.</h2>
-      <p>Both flows sign a live USDt transfer on Sepolia via your WDK wallet. Cancel anytime, nothing happens without your signature.</p>
+      <p>Both flows sign a live USDt transfer from the wallet you connected. Nothing happens without your signature.</p>
     </div>
     <div class="panel-grid">
       <div class="panel">
@@ -184,7 +158,13 @@
             <h3>Tip a team</h3>
             <p class="panel-sub">One tx, straight to the team's on-chain tip address.</p>
           </div>
-          <span class="panel-tag">USDt</span>
+          <span class="panel-tag usdt-badge" title="USDT">
+            <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M16 32c8.837 0 16-7.163 16-16S24.837 0 16 0 0 7.163 0 16s7.163 16 16 16z" fill="#26A17B"/>
+              <path d="M17.94 17.13v-.001c-.114.008-.702.043-2.012.043-1.045 0-1.789-.031-2.05-.043v.001c-4.062-.179-7.093-.888-7.093-1.737 0-.847 3.031-1.557 7.093-1.739V16.4c.265.019 1.026.064 2.068.064 1.25 0 1.877-.052 1.994-.063v-2.744c4.052.181 7.076.891 7.076 1.737 0 .849-3.024 1.557-7.076 1.736m0-3.762v-2.454h5.618V7.166H8.435v3.748h5.617v2.453c-4.566.21-8 1.113-8 2.194 0 1.083 3.434 1.986 8 2.196v7.865h3.888v-7.866c4.556-.209 7.983-1.112 7.983-2.194 0-1.082-3.427-1.984-7.983-2.194" fill="#fff"/>
+            </svg>
+            <span>USDT</span>
+          </span>
         </div>
         <div class="form-row">
           <div class="field field-team">
@@ -232,26 +212,7 @@
                 <span class="dd-current">Equal split</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
               </button>
-              <div class="dd-panel" role="listbox">
-                <div class="dd-item" data-value="equal">
-                  <div class="dd-item-body">
-                    <span class="dd-item-title">Equal split</span>
-                    <span class="dd-item-sub">Every contributor gets the same share, regardless of amount.</span>
-                  </div>
-                </div>
-                <div class="dd-item" data-value="proportional">
-                  <div class="dd-item-body">
-                    <span class="dd-item-title">Proportional</span>
-                    <span class="dd-item-sub">Payout matches each contributor's share of the pool.</span>
-                  </div>
-                </div>
-                <div class="dd-item" data-value="winner-takes">
-                  <div class="dd-item-body">
-                    <span class="dd-item-title">Winner takes all</span>
-                    <span class="dd-item-sub">One address collects the whole pool at payout.</span>
-                  </div>
-                </div>
-              </div>
+              <div class="dd-panel" role="listbox"></div>
             </div>
           </div>
           <div class="field">
@@ -316,12 +277,6 @@
           <a href="https://github.com/obseasd/fanbank" target="_blank" rel="noopener">GitHub</a>
           <a href="/api/health" target="_blank" rel="noopener">Health endpoint</a>
         </div>
-        <div class="footer-col">
-          <div class="footer-col-head">Hackathon</div>
-          <a href="https://dorahacks.io/hackathon/tether-developers-cup/detail" target="_blank" rel="noopener">Tether Developers Cup</a>
-          <a href="https://dorahacks.io/hackathon/tether-developers-cup/tracks" target="_blank" rel="noopener">Tracks</a>
-          <span>Track: WDK</span>
-        </div>
       </div>
     </div>
     <div class="footer-legal">
@@ -329,43 +284,68 @@
     </div>
   </footer>
 
-  <!-- ─── WALLET MODAL ─── -->
+  <!-- ─── WALLET MODAL (CONNECT + STATUS) ─── -->
   <div id="wallet-modal" class="modal" hidden>
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel wallet-modal-panel">
       <button class="modal-close" data-close type="button" aria-label="Close">×</button>
-      <div class="wallet-modal-head">
-        <div class="wallet-modal-title">Your FanBank wallet</div>
-        <p class="wallet-modal-sub">This is the wallet the server signs from via the Tether WDK. In production every fan opens their own seed on device; the demo shares one wallet so judges can walk the flow without setup.</p>
-      </div>
-      <div class="wallet-modal-body">
-        <div class="wallet-field">
-          <span class="wallet-field-label">Address</span>
-          <div class="wallet-field-value mono" id="modal-address">…</div>
+
+      <!-- CONNECT VIEW: shown when no wallet is connected -->
+      <div class="wallet-view" data-view="connect">
+        <div class="wallet-modal-head">
+          <div class="wallet-modal-title">Connect a wallet</div>
+          <p class="wallet-modal-sub">Sign every tip, pool, and bet from your own wallet. FanBank never touches your seed and never holds your USDt.</p>
         </div>
-        <div class="wallet-field row">
-          <div>
-            <span class="wallet-field-label">USDt balance</span>
-            <div class="wallet-field-value" id="modal-usdt">…</div>
-          </div>
-          <div>
-            <span class="wallet-field-label">Gas (ETH)</span>
-            <div class="wallet-field-value" id="modal-gas">…</div>
-          </div>
-        </div>
-        <div class="wallet-field">
-          <span class="wallet-field-label">Chain</span>
-          <div class="wallet-field-value" id="modal-chain">Sepolia · chainId 11155111</div>
-        </div>
-        <div class="wallet-actions">
-          <button class="btn secondary" id="modal-copy">Copy address</button>
-          <a class="btn primary" id="modal-explorer" target="_blank" rel="noopener">View on Etherscan ↗</a>
+        <div class="wallet-connect-list">
+          <button class="wallet-option" data-connect="injected">
+            <span class="wallet-option-icon" id="injected-icon">🦊</span>
+            <span class="wallet-option-body">
+              <span class="wallet-option-title" id="injected-title">MetaMask, Rabby, Coinbase…</span>
+              <span class="wallet-option-sub" id="injected-sub">Detected browser wallet</span>
+            </span>
+            <span class="wallet-option-cta">Connect →</span>
+          </button>
+          <button class="wallet-option demo" data-connect="demo">
+            <span class="wallet-option-icon">⚙</span>
+            <span class="wallet-option-body">
+              <span class="wallet-option-title">Use the demo wallet</span>
+              <span class="wallet-option-sub">Shared server-side WDK wallet for judges without MetaMask.</span>
+            </span>
+            <span class="wallet-option-cta">Use demo →</span>
+          </button>
         </div>
       </div>
-      <div class="wallet-modal-foot">
-        <div class="wallet-modal-note">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
-          Every tx below is signed by this wallet via the Tether WDK. Balances update after each confirmation.
+
+      <!-- CONNECTED VIEW: shown when a wallet is connected -->
+      <div class="wallet-view" data-view="connected" hidden>
+        <div class="wallet-modal-head">
+          <div class="wallet-modal-title">Wallet connected</div>
+          <p class="wallet-modal-sub" id="connected-source">Signed from your browser wallet.</p>
+        </div>
+        <div class="wallet-modal-body">
+          <div class="wallet-field">
+            <span class="wallet-field-label">Address</span>
+            <div class="wallet-field-value mono" id="modal-address">…</div>
+          </div>
+          <div class="wallet-field row">
+            <div>
+              <span class="wallet-field-label">USDt balance</span>
+              <div class="wallet-field-value" id="modal-usdt">…</div>
+            </div>
+            <div>
+              <span class="wallet-field-label">Gas (ETH)</span>
+              <div class="wallet-field-value" id="modal-gas">…</div>
+            </div>
+          </div>
+          <div class="wallet-field">
+            <span class="wallet-field-label">Chain</span>
+            <div class="wallet-field-value" id="modal-chain">Sepolia · chainId 11155111</div>
+          </div>
+          <div class="wallet-actions">
+            <button class="btn secondary" id="modal-copy">Copy address</button>
+            <a class="btn secondary" id="modal-explorer" target="_blank" rel="noopener">Etherscan ↗</a>
+            <button class="btn ghost" id="modal-disconnect">Disconnect</button>
+          </div>
         </div>
       </div>
     </div>

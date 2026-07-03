@@ -1,20 +1,33 @@
 /// FanBank frontend runtime.
 ///
-/// Vanilla JS, no framework. Sections:
-///   1. Small helpers (API, formatting, DOM utilities)
-///   2. Toast host (non-blocking notifications instead of alert())
-///   3. Custom dropdown that renders team flags reliably (flagcdn.com)
-///   4. Wallet pill + modal (server-side WDK wallet snapshot)
-///   5. Tipping form, group pool form, prediction markets, journal
-///   6. Boot: fetch state, wire event handlers, poll for live updates
+/// Vanilla JS, no framework. Two wallet modes are supported:
+///
+///   1. External wallet (recommended) — user connects MetaMask / Rabby /
+///      Coinbase / any EIP-1193 provider. Every tx (USDt transfer for
+///      tips, pool contributions, bets) is signed client-side via ethers
+///      and the server only receives the tx hash to append to the audit
+///      journal. FanBank never touches the user's seed.
+///
+///   2. Demo mode — the server signs with a shared WDK wallet. Handy for
+///      judges without MetaMask; every tx is still on chain but the same
+///      wallet is fan + escrow. Clearly labeled in the modal.
 
 const $ = sel => document.querySelector(sel)
 const $$ = sel => [...document.querySelectorAll(sel)]
 
-const EXPLORER = 'https://sepolia.etherscan.io'
-const CHAIN_LABEL = 'Sepolia · chainId 11155111'
+const ERC20_ABI = [
+  'function balanceOf(address) view returns (uint256)',
+  'function decimals() view returns (uint8)',
+  'function transfer(address to, uint256 amount) returns (bool)',
+]
+
+let ethers = window.ethers  // loaded via UMD script tag
+let CONFIG = null            // { chainId, usdt, escrow, explorer, ... }
+let CONNECTED = null         // { mode: 'external'|'demo', address, provider, signer, usdt, gas }
+let TEAMS = []
+let MATCHES = []
+
 const FLAG_CDN = code => `https://flagcdn.com/w40/${code}.png`
-const FLAG_CDN_LARGE = code => `https://flagcdn.com/w80/${code}.png`
 
 const fmtUsdt = n => `${Number(n || 0).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDt`
 const fmtGas = n => `${Number(n || 0).toFixed(4)} ETH`
@@ -39,10 +52,6 @@ async function api (path, opts = {}) {
   return data
 }
 
-let TEAMS = []
-let MATCHES = []
-let WALLET = null
-
 /* ─── Toasts ─── */
 function toast ({ level = 'ok', title, desc, txHash, timeout = 5500 } = {}) {
   const host = $('#toasts')
@@ -50,7 +59,7 @@ function toast ({ level = 'ok', title, desc, txHash, timeout = 5500 } = {}) {
   el.className = `toast ${level}`
   const icon = level === 'ok' ? '✓' : '!'
   const link = txHash
-    ? ` · <a href="${EXPLORER}/tx/${txHash}" target="_blank" rel="noopener">${shortHash(txHash)}</a>`
+    ? ` · <a href="${CONFIG?.explorer || 'https://sepolia.etherscan.io'}/tx/${txHash}" target="_blank" rel="noopener">${shortHash(txHash)}</a>`
     : ''
   el.innerHTML = `
     <div class="toast-icon">${icon}</div>
@@ -67,12 +76,205 @@ function toast ({ level = 'ok', title, desc, txHash, timeout = 5500 } = {}) {
   }, timeout)
 }
 
-/* ─── Custom dropdown ─── */
+/* ─── Wallet: injected provider detection + name ─── */
+function detectInjected () {
+  const eth = window.ethereum
+  if (!eth) return { available: false, name: 'No wallet detected', hint: 'Install MetaMask, Rabby, or Coinbase Wallet' }
+  if (eth.isMetaMask) return { available: true, name: 'MetaMask', icon: '🦊' }
+  if (eth.isRabby) return { available: true, name: 'Rabby', icon: '🐰' }
+  if (eth.isCoinbaseWallet) return { available: true, name: 'Coinbase Wallet', icon: '🔵' }
+  if (eth.isBraveWallet) return { available: true, name: 'Brave Wallet', icon: '🦁' }
+  return { available: true, name: 'Injected wallet', icon: '👛' }
+}
+
+/* ─── Wallet: connect + disconnect ─── */
+async function connectInjected () {
+  const eth = window.ethereum
+  if (!eth) throw new Error('No browser wallet detected. Install MetaMask, Rabby, or Coinbase Wallet.')
+
+  const provider = new ethers.BrowserProvider(eth)
+  const accounts = await provider.send('eth_requestAccounts', [])
+  if (!accounts?.length) throw new Error('No accounts returned by the wallet')
+
+  // Ensure we're on the right network
+  const net = await provider.getNetwork()
+  if (Number(net.chainId) !== CONFIG.chainId) {
+    try {
+      await provider.send('wallet_switchEthereumChain', [{ chainId: '0x' + CONFIG.chainId.toString(16) }])
+    } catch (e) {
+      // If chain not added yet, add it. Sepolia is well-known but some
+      // wallets do not have it by default.
+      if (e.code === 4902 || String(e.message || '').match(/unrecognized chain/i)) {
+        await provider.send('wallet_addEthereumChain', [{
+          chainId: '0x' + CONFIG.chainId.toString(16),
+          chainName: 'Sepolia',
+          nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 },
+          rpcUrls: [CONFIG.rpcHttp || 'https://ethereum-sepolia-rpc.publicnode.com'],
+          blockExplorerUrls: [CONFIG.explorer],
+        }])
+      } else {
+        throw e
+      }
+    }
+  }
+
+  const signer = await provider.getSigner()
+  const address = await signer.getAddress()
+  CONNECTED = { mode: 'external', address, provider, signer }
+  await refreshConnectedBalances()
+
+  // Update UI state
+  eth.on?.('accountsChanged', handleAccountsChanged)
+  eth.on?.('chainChanged', () => location.reload())
+  showConnectedView()
+}
+
+function handleAccountsChanged (accounts) {
+  if (!accounts?.length) {
+    disconnect()
+  } else if (accounts[0].toLowerCase() !== CONNECTED?.address?.toLowerCase()) {
+    // Account switched — reload the connection
+    connectInjected().catch(err => toast({ level: 'err', title: 'Reconnect failed', desc: err.message }))
+  }
+}
+
+async function connectDemo () {
+  // Demo mode: the server's WDK wallet is the fan.
+  const w = await api('/api/wallet')
+  CONNECTED = {
+    mode: 'demo',
+    address: w.address,
+    usdt: w.usdt,
+    gas: w.gas,
+    signer: null,
+    provider: null,
+  }
+  showConnectedView()
+}
+
+async function refreshConnectedBalances () {
+  if (!CONNECTED) return
+  if (CONNECTED.mode === 'external') {
+    const usdt = new ethers.Contract(CONFIG.usdt.address, ERC20_ABI, CONNECTED.provider)
+    const [raw, gasWei] = await Promise.all([
+      usdt.balanceOf(CONNECTED.address),
+      CONNECTED.provider.getBalance(CONNECTED.address),
+    ])
+    CONNECTED.usdt = Number(ethers.formatUnits(raw, CONFIG.usdt.decimals))
+    CONNECTED.gas = Number(ethers.formatEther(gasWei))
+  } else {
+    // Demo mode uses server as source of truth
+    try {
+      const w = await api('/api/wallet')
+      CONNECTED.usdt = w.usdt
+      CONNECTED.gas = w.gas
+    } catch { /* keep last known */ }
+  }
+  updatePillAndModal()
+}
+
+function updatePillAndModal () {
+  const pill = $('#wallet-pill')
+  if (!CONNECTED) {
+    pill.classList.remove('ok', 'err')
+    pill.querySelector('.label').textContent = 'Connect wallet'
+    return
+  }
+  pill.classList.add('ok')
+  pill.classList.remove('err')
+  pill.querySelector('.label').textContent = `${shortAddr(CONNECTED.address)} · ${fmtUsdt(CONNECTED.usdt)}`
+
+  $('#modal-address').textContent = CONNECTED.address
+  $('#modal-usdt').textContent = fmtUsdt(CONNECTED.usdt)
+  $('#modal-gas').textContent = fmtGas(CONNECTED.gas)
+  $('#modal-explorer').href = `${CONFIG.explorer}/address/${CONNECTED.address}`
+  $('#connected-source').textContent = CONNECTED.mode === 'external'
+    ? `Signed from your browser wallet. FanBank never sees your seed.`
+    : `Using the shared demo wallet on the server. All tx sign from the same WDK seed.`
+}
+
+function showConnectedView () {
+  $('[data-view="connect"]').hidden = true
+  $('[data-view="connected"]').hidden = false
+  updatePillAndModal()
+}
+function showConnectView () {
+  $('[data-view="connect"]').hidden = false
+  $('[data-view="connected"]').hidden = true
+  const inj = detectInjected()
+  $('#injected-icon').textContent = inj.icon || '👛'
+  $('#injected-title').textContent = inj.name
+  $('#injected-sub').textContent = inj.available ? 'Detected browser wallet' : inj.hint
+  $('.wallet-option[data-connect="injected"]').disabled = !inj.available
+  updatePillAndModal()
+}
+function disconnect () {
+  if (CONNECTED?.provider && window.ethereum?.removeListener) {
+    try { window.ethereum.removeListener('accountsChanged', handleAccountsChanged) } catch {}
+  }
+  CONNECTED = null
+  showConnectView()
+  toast({ level: 'ok', title: 'Wallet disconnected' })
+}
+
+function openWalletModal () {
+  $('#wallet-modal').hidden = false
+  if (CONNECTED) showConnectedView(); else showConnectView()
+}
+function closeWalletModal () { $('#wallet-modal').hidden = true }
+
+async function copyToClipboard (text, feedback) {
+  try {
+    await navigator.clipboard.writeText(text)
+    toast({ level: 'ok', title: feedback || 'Copied', desc: text })
+  } catch {
+    toast({ level: 'err', title: 'Copy failed', desc: 'Clipboard permission denied' })
+  }
+}
+
+/* ─── Ensure connected before any tx ─── */
+async function ensureConnected () {
+  if (CONNECTED) return CONNECTED
+  openWalletModal()
+  throw new Error('Please connect a wallet first')
+}
+
+/* ─── Client-side USDt transfer via ethers (external mode) ─── */
+async function transferUsdt (to, amount) {
+  if (CONNECTED.mode !== 'external') throw new Error('Not in external mode')
+  if (!CONFIG.usdt.address) throw new Error('USDT contract not configured on the server')
+  const contract = new ethers.Contract(CONFIG.usdt.address, ERC20_ABI, CONNECTED.signer)
+  const raw = ethers.parseUnits(String(amount), CONFIG.usdt.decimals)
+  const tx = await contract.transfer(to, raw)
+  const receipt = await tx.wait()
+  if (receipt.status !== 1) throw new Error('Tx reverted')
+  return { hash: tx.hash, from: CONNECTED.address, to, amount: Number(amount), blockNumber: receipt.blockNumber }
+}
+
+/* ─── Stats strip ─── */
+async function refreshStats () {
+  try {
+    const s = await api('/api/stats')
+    $('#stat-tips').textContent = String(s.tipCount)
+    $('#stat-tip-vol').textContent = fmtUsdt(s.tipVolumeUsdt)
+    $('#stat-bets').textContent = String(s.betCount)
+    $('#stat-bet-vol').textContent = fmtUsdt(s.betVolumeUsdt)
+  } catch { /* keep previous */ }
+}
+
+/* ─── Custom dropdown, position: fixed so panel escapes clipping ─── */
 function initDropdown (root, options, onChange, { placeholder, defaultValue } = {}) {
   const btn = root.querySelector('.dd-btn')
   const panel = root.querySelector('.dd-panel')
   const cur = root.querySelector('.dd-current')
   let current = null
+
+  function positionPanel () {
+    const rect = btn.getBoundingClientRect()
+    panel.style.left = rect.left + 'px'
+    panel.style.top = (rect.bottom + 6) + 'px'
+    panel.style.width = rect.width + 'px'
+  }
 
   function render () {
     panel.innerHTML = options.map(o => `
@@ -98,7 +300,6 @@ function initDropdown (root, options, onChange, { placeholder, defaultValue } = 
       `
     }
     root.classList.remove('open')
-    render()
     onChange && onChange(value, opt)
   }
 
@@ -107,97 +308,64 @@ function initDropdown (root, options, onChange, { placeholder, defaultValue } = 
 
   btn.addEventListener('click', e => {
     e.stopPropagation()
-    // Close other dropdowns first
+    // Close other dropdowns
     $$('.dropdown.open').forEach(d => { if (d !== root) d.classList.remove('open') })
-    root.classList.toggle('open')
+    if (root.classList.contains('open')) {
+      root.classList.remove('open')
+    } else {
+      render()
+      positionPanel()
+      root.classList.add('open')
+    }
   })
   document.addEventListener('click', e => {
-    if (!root.contains(e.target)) root.classList.remove('open')
+    if (root.classList.contains('open') && !panel.contains(e.target) && !btn.contains(e.target)) {
+      root.classList.remove('open')
+    }
   })
+  window.addEventListener('scroll', () => { if (root.classList.contains('open')) positionPanel() }, true)
+  window.addEventListener('resize', () => { if (root.classList.contains('open')) positionPanel() })
 
-  if (defaultValue) select(defaultValue)
+  if (defaultValue !== undefined) select(defaultValue)
   return { select, getValue: () => current }
 }
 
 let tipTeamDD, poolTeamDD, poolPolicyDD
 
-/* ─── Wallet pill + modal ─── */
-async function refreshWallet () {
-  try {
-    const w = await api('/api/wallet')
-    WALLET = w
-    updateWalletUI(w)
-  } catch (e) {
-    WALLET = null
-    const pill = $('#wallet-pill')
-    pill.classList.remove('ok')
-    pill.classList.add('err')
-    pill.querySelector('.label').textContent = 'wallet offline'
-  }
-}
-
-function updateWalletUI (w) {
-  const pill = $('#wallet-pill')
-  pill.classList.remove('err')
-  pill.classList.add('ok')
-  pill.querySelector('.label').textContent = `${shortAddr(w.address)} · ${fmtUsdt(w.usdt)}`
-
-  $('#mini-usdt').textContent = fmtUsdt(w.usdt)
-  $('#mini-address').textContent = w.address
-  $('#mini-explorer').href = `${EXPLORER}/address/${w.address}`
-
-  $('#modal-address').textContent = w.address
-  $('#modal-usdt').textContent = fmtUsdt(w.usdt)
-  $('#modal-gas').textContent = fmtGas(w.gas)
-  $('#modal-chain').textContent = CHAIN_LABEL
-  $('#modal-explorer').href = `${EXPLORER}/address/${w.address}`
-}
-
-function openWalletModal () {
-  if (!WALLET) return toast({ level: 'err', title: 'Wallet not ready', desc: 'The server has not initialized the WDK wallet yet. Check .env.' })
-  $('#wallet-modal').hidden = false
-}
-function closeWalletModal () { $('#wallet-modal').hidden = true }
-
-async function copyToClipboard (text, feedback) {
-  try {
-    await navigator.clipboard.writeText(text)
-    toast({ level: 'ok', title: feedback || 'Copied', desc: text })
-  } catch {
-    toast({ level: 'err', title: 'Copy failed', desc: 'Clipboard permission was denied.' })
-  }
-}
-
-/* ─── Stats strip ─── */
-async function refreshStats () {
-  try {
-    const s = await api('/api/stats')
-    $('#stat-tips').textContent = String(s.tipCount)
-    $('#stat-tip-vol').textContent = fmtUsdt(s.tipVolumeUsdt)
-    $('#stat-bets').textContent = String(s.betCount)
-    $('#stat-bet-vol').textContent = fmtUsdt(s.betVolumeUsdt)
-  } catch { /* keep previous */ }
-}
-
-/* ─── Tip form ─── */
+/* ─── Tip flow ─── */
 async function submitTip () {
   const teamId = tipTeamDD.getValue()
   const amount = Number($('#tip-amount').value)
   const hint = $('#tip-hint')
   if (!teamId) { hint.className = 'hint err'; hint.textContent = 'Pick a team first.'; return }
   if (!amount || amount <= 0) { hint.className = 'hint err'; hint.textContent = 'Amount must be positive.'; return }
+
   const btn = $('#tip-btn')
   btn.disabled = true
   hint.className = 'hint'
-  hint.textContent = 'Signing transfer via WDK…'
+  hint.textContent = 'Waiting for wallet…'
+
   try {
-    const r = await api('/api/tip/team', { method: 'POST', body: { teamId, amount } })
+    await ensureConnected()
     const team = TEAMS.find(t => t.id === teamId)
+    let receipt
+    if (CONNECTED.mode === 'external') {
+      hint.textContent = 'Sign the USDt transfer in your wallet…'
+      const res = await transferUsdt(team.tipAddress, amount)
+      hint.textContent = `Tx sent, confirming…`
+      receipt = res
+      await api('/api/tip/team/external', { method: 'POST', body: {
+        teamId, amount, txHash: res.hash, from: res.from, to: team.tipAddress,
+      } })
+    } else {
+      const r = await api('/api/tip/team', { method: 'POST', body: { teamId, amount } })
+      receipt = r.receipt
+    }
     hint.className = 'hint ok'
-    hint.textContent = `Tipped ${fmtUsdt(amount)} to ${team?.name}. Tx ${shortHash(r.receipt.hash)}.`
-    toast({ level: 'ok', title: `Tipped ${fmtUsdt(amount)} to ${team?.name}`, txHash: r.receipt.hash })
+    hint.textContent = `Tipped ${fmtUsdt(amount)} to ${team.name}. Tx ${shortHash(receipt.hash)}.`
+    toast({ level: 'ok', title: `Tipped ${fmtUsdt(amount)} to ${team.name}`, txHash: receipt.hash })
     $('#tip-amount').value = ''
-    await Promise.all([refreshWallet(), refreshStats(), refreshJournal()])
+    await Promise.all([refreshConnectedBalances(), refreshStats(), refreshJournal()])
   } catch (e) {
     hint.className = 'hint err'
     hint.textContent = e.message
@@ -207,7 +375,7 @@ async function submitTip () {
   }
 }
 
-/* ─── Pool form + list ─── */
+/* ─── Pool flow ─── */
 async function submitPool () {
   const purpose = $('#pool-purpose').value.trim()
   const policy = poolPolicyDD.getValue() || 'equal'
@@ -255,9 +423,19 @@ async function contributeToPool (poolId) {
   const amount = prompt('USDt amount to contribute?', '1')
   if (!amount) return
   try {
-    const r = await api(`/api/pool/${poolId}/contribute`, { method: 'POST', body: { amount: Number(amount) } })
-    toast({ level: 'ok', title: `Contributed ${fmtUsdt(amount)}`, txHash: r.receipt.hash })
-    await Promise.all([refreshWallet(), refreshStats(), refreshPools(), refreshJournal()])
+    await ensureConnected()
+    let receipt
+    if (CONNECTED.mode === 'external') {
+      receipt = await transferUsdt(CONFIG.escrow, Number(amount))
+      await api(`/api/pool/${poolId}/contribute/external`, { method: 'POST', body: {
+        amount: Number(amount), txHash: receipt.hash, from: receipt.from, to: CONFIG.escrow,
+      } })
+    } else {
+      const r = await api(`/api/pool/${poolId}/contribute`, { method: 'POST', body: { amount: Number(amount) } })
+      receipt = r.receipt
+    }
+    toast({ level: 'ok', title: `Contributed ${fmtUsdt(amount)}`, txHash: receipt.hash })
+    await Promise.all([refreshConnectedBalances(), refreshStats(), refreshPools(), refreshJournal()])
   } catch (e) {
     toast({ level: 'err', title: 'Contribution failed', desc: e.message })
   }
@@ -269,9 +447,11 @@ async function payoutPool (poolId) {
     if (!split.length) return toast({ level: 'err', title: 'Nothing to split yet' })
     const preview = split.map(s => `  ${shortAddr(s.address)} ← ${fmtUsdt(s.amountUsdt)}`).join('\n')
     if (!confirm(`Payout ${fmtUsdt(totalUsdt)} with policy "${policy}"?\n\n${preview}`)) return
+    // Pool payout always flows from the operator's server-side WDK wallet
+    // (it holds the pooled USDt). Operators + judges can flip this later.
     await api(`/api/pool/${poolId}/payout`, { method: 'POST', body: {} })
     toast({ level: 'ok', title: 'Pool paid out', desc: `${fmtUsdt(totalUsdt)} across ${split.length} recipients` })
-    await Promise.all([refreshWallet(), refreshStats(), refreshPools(), refreshJournal()])
+    await Promise.all([refreshConnectedBalances(), refreshStats(), refreshPools(), refreshJournal()])
   } catch (e) {
     toast({ level: 'err', title: 'Payout failed', desc: e.message })
   }
@@ -348,9 +528,19 @@ async function placeBet (matchId, outcome) {
   const amount = prompt(`Stake in USDt on "${outcome}" ?`, '1')
   if (!amount) return
   try {
-    const r = await api('/api/bet', { method: 'POST', body: { matchId, outcome, amount: Number(amount) } })
-    toast({ level: 'ok', title: `Bet placed: ${fmtUsdt(amount)} on ${outcome}`, txHash: r.receipt.hash })
-    await Promise.all([refreshWallet(), refreshStats(), refreshMarkets(), refreshJournal()])
+    await ensureConnected()
+    let receipt
+    if (CONNECTED.mode === 'external') {
+      receipt = await transferUsdt(CONFIG.escrow, Number(amount))
+      await api('/api/bet/external', { method: 'POST', body: {
+        matchId, outcome, amount: Number(amount), txHash: receipt.hash, from: receipt.from, to: CONFIG.escrow,
+      } })
+    } else {
+      const r = await api('/api/bet', { method: 'POST', body: { matchId, outcome, amount: Number(amount) } })
+      receipt = r.receipt
+    }
+    toast({ level: 'ok', title: `Bet placed: ${fmtUsdt(amount)} on ${outcome}`, txHash: receipt.hash })
+    await Promise.all([refreshConnectedBalances(), refreshStats(), refreshMarkets(), refreshJournal()])
   } catch (e) {
     toast({ level: 'err', title: 'Bet failed', desc: e.message })
   }
@@ -364,7 +554,7 @@ async function settleDemoDialog (matchId) {
     await api(`/api/match/${matchId}/settle-demo`, { method: 'POST', body: { outcome, score } })
     const r = await api(`/api/market/${matchId}/settle`, { method: 'POST' })
     toast({ level: 'ok', title: 'Market settled', desc: `${r.payouts} payouts · ${fmtUsdt(r.netPoolUsdt)} distributed` })
-    await Promise.all([refreshWallet(), refreshStats(), refreshMarkets(), refreshJournal()])
+    await Promise.all([refreshConnectedBalances(), refreshStats(), refreshMarkets(), refreshJournal()])
   } catch (e) {
     toast({ level: 'err', title: 'Settle failed', desc: e.message })
   }
@@ -382,7 +572,7 @@ async function refreshJournal () {
         <span class="journal-type">${e.type}</span>
         <span class="journal-desc">${describeEvent(e)}</span>
         ${e.hash
-          ? `<a class="journal-hash" href="${EXPLORER}/tx/${e.hash}" target="_blank" rel="noopener">${shortHash(e.hash)} ↗</a>`
+          ? `<a class="journal-hash" href="${CONFIG?.explorer}/tx/${e.hash}" target="_blank" rel="noopener">${shortHash(e.hash)} ↗</a>`
           : '<span class="journal-hash">off-chain</span>'}
       </div>
     `).join('')
@@ -420,20 +610,11 @@ function describeEvent (e) {
 async function loadTeams () {
   const { teams } = await api('/api/teams')
   TEAMS = teams
-
-  const options = teams.map(t => ({
-    value: t.id,
-    iso: t.iso,
-    label: t.name,
-    sub: t.nickname,
-  }))
-  tipTeamDD = initDropdown($('[data-dropdown="tip-team"]'), options, () => {}, {
-    placeholder: 'Pick a team',
-  })
+  const options = teams.map(t => ({ value: t.id, iso: t.iso, label: t.name, sub: t.nickname }))
+  tipTeamDD = initDropdown($('[data-dropdown="tip-team"]'), options, () => {}, { placeholder: 'Pick a team' })
   poolTeamDD = initDropdown($('[data-dropdown="pool-team"]'),
     [{ value: '', label: 'No team' }, ...options], () => {},
     { placeholder: 'No team', defaultValue: '' })
-
   poolPolicyDD = initDropdown($('[data-dropdown="pool-policy"]'), [
     { value: 'equal', label: 'Equal split', sub: 'Each contributor gets the same share' },
     { value: 'proportional', label: 'Proportional', sub: 'Share proportional to contribution' },
@@ -446,23 +627,37 @@ async function loadMatches () {
   MATCHES = matches
 }
 
+async function loadConfig () {
+  CONFIG = await api('/api/config')
+}
+
 // Wire buttons
 $('#wallet-pill').addEventListener('click', openWalletModal)
-$('#hero-cta-primary').addEventListener('click', openWalletModal)
+$('#hero-connect').addEventListener('click', openWalletModal)
 $$('#wallet-modal [data-close]').forEach(el => el.addEventListener('click', closeWalletModal))
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeWalletModal() })
 
 $('#tip-btn').addEventListener('click', submitTip)
 $('#pool-create-btn').addEventListener('click', submitPool)
 
-$('#mini-copy').addEventListener('click', () => WALLET && copyToClipboard(WALLET.address, 'Address copied'))
-$('#modal-copy').addEventListener('click', () => WALLET && copyToClipboard(WALLET.address, 'Address copied'))
+$('#modal-copy').addEventListener('click', () => CONNECTED && copyToClipboard(CONNECTED.address, 'Address copied'))
+$('#modal-disconnect').addEventListener('click', () => { disconnect(); closeWalletModal() })
+$$('.wallet-option[data-connect="injected"]').forEach(el => el.addEventListener('click', async () => {
+  try { await connectInjected(); toast({ level: 'ok', title: 'Wallet connected', desc: shortAddr(CONNECTED.address) }) }
+  catch (e) { toast({ level: 'err', title: 'Connection failed', desc: e.message }) }
+}))
+$$('.wallet-option[data-connect="demo"]').forEach(el => el.addEventListener('click', async () => {
+  try { await connectDemo(); toast({ level: 'ok', title: 'Demo wallet active', desc: shortAddr(CONNECTED.address) }) }
+  catch (e) { toast({ level: 'err', title: 'Demo wallet unavailable', desc: e.message }) }
+}))
 
 // Boot sequence
 ;(async () => {
+  await loadConfig()
   await loadTeams()
   await loadMatches()
-  await Promise.all([refreshWallet(), refreshStats(), refreshMarkets(), refreshPools(), refreshJournal()])
-  setInterval(refreshWallet, 30_000)
+  await Promise.all([refreshStats(), refreshMarkets(), refreshPools(), refreshJournal()])
+  showConnectView()  // no wallet connected on boot
+  setInterval(() => { if (CONNECTED) refreshConnectedBalances() }, 30_000)
   setInterval(refreshMarkets, 20_000)
 })()

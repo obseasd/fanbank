@@ -25,6 +25,7 @@ import { tipTeam, tipPlayer } from './fan/tipping.js'
 import { createPool, contribute, computeSplit, payout, listPools } from './fan/pool.js'
 import { placeBet, marketState, settleMarket, snapshotAllMarkets } from './fan/prediction.js'
 import { list as journalList, stats as journalStats } from './fan/journal.js'
+import { recordExternalTip, recordExternalContribution, recordExternalBet } from './fan/external.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -63,6 +64,28 @@ app.get('/api/health', (_req, res) => {
     walletAddress: wallet?.address ?? null,
     chainRpc: wallet?.rpcUrl ?? null,
     usdt: wallet?.usdtAddress ?? null,
+  })
+})
+
+/// Public network + contract config so the browser can sign transactions
+/// itself via an injected wallet (MetaMask, Rabby, etc). USDt address,
+/// chain id, and the operator's tip / escrow addresses are all public
+/// data, safe to serve.
+app.get('/api/config', (_req, res) => {
+  res.json({
+    chainId: Number(process.env.CHAIN_ID || 11155111),
+    chainName: 'Sepolia',
+    rpcHttp: wallet?.rpcUrl ?? process.env.RPC_URL ?? null,
+    explorer: 'https://sepolia.etherscan.io',
+    usdt: {
+      address: wallet?.usdtAddress ?? null,
+      decimals: wallet?.usdtDecimals ?? 6,
+      symbol: 'USDT',
+    },
+    // The operator wallet acts as tip aggregator + pool escrow + prediction
+    // market escrow in V1. Fans signing client-side send USDt here for
+    // pool contributions and bets; direct tips go to the team address.
+    escrow: wallet?.address ?? null,
   })
 })
 
@@ -199,6 +222,36 @@ app.post('/api/market/:matchId/settle', txLimit, async (req, res) => {
   if (!requireWallet(res)) return
   try { res.json(await settleMarket(wallet, req.params.matchId)) }
   catch (e) { res.status(400).json({ error: e.message }) }
+})
+
+// ─── External wallet mode (client signed the tx already, just log it) ───
+
+app.post('/api/tip/team/external', txLimit, async (req, res) => {
+  try {
+    const { teamId, amount, txHash, from, to } = req.body ?? {}
+    res.json(await recordExternalTip({ target: 'team', teamId, amount, txHash, from, to }))
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+
+app.post('/api/tip/player/external', txLimit, async (req, res) => {
+  try {
+    const { teamId, playerName, amount, txHash, from, to } = req.body ?? {}
+    res.json(await recordExternalTip({ target: 'player', teamId, playerName, amount, txHash, from, to }))
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+
+app.post('/api/pool/:id/contribute/external', txLimit, async (req, res) => {
+  try {
+    const { amount, txHash, from, to } = req.body ?? {}
+    res.json(await recordExternalContribution({ poolId: req.params.id, amount, txHash, from, to }))
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+
+app.post('/api/bet/external', txLimit, async (req, res) => {
+  try {
+    const { matchId, outcome, amount, txHash, from, to } = req.body ?? {}
+    res.json(await recordExternalBet({ matchId, outcome, amount, txHash, from, to }))
+  } catch (e) { res.status(400).json({ error: e.message }) }
 })
 
 const port = Number(process.env.PORT || 3000)

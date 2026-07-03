@@ -204,16 +204,24 @@ section, header, footer, main { position: relative; z-index: 1; }
 
 /* ─── Hero ─── */
 .hero {
-  padding: 80px 32px 40px;
-  max-width: 1240px;
+  padding: 100px 32px 60px;
+  max-width: 900px;
   margin: 0 auto;
+  text-align: center;
 }
 .hero-inner {
-  display: grid;
-  grid-template-columns: 1.5fr 1fr;
-  gap: 40px;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
+.hero-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.hero .lead { text-align: center; margin-left: auto; margin-right: auto; }
+.hero-cta { justify-content: center; }
+.hero-trust { justify-content: center; }
 .hero-eyebrow {
   display: flex;
   align-items: center;
@@ -487,7 +495,21 @@ section, header, footer, main { position: relative; z-index: 1; }
   letter-spacing: 0.12em;
   text-transform: uppercase;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
+.panel-tag.usdt-badge {
+  padding: 4px 10px 4px 4px;
+  background: rgba(38, 161, 123, 0.14);
+  color: #fff;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  font-size: 12px;
+}
+.panel-tag.usdt-badge svg { width: 22px; height: 22px; }
 
 .form-row {
   display: grid;
@@ -558,6 +580,9 @@ section, header, footer, main { position: relative; z-index: 1; }
 .hint.err { color: var(--danger); }
 
 /* ─── Dropdown ─── */
+/* Rendered with position: fixed so the panel escapes any parent stacking
+ * context and never gets clipped or ordered underneath a following
+ * section. Panel offset + width are computed in JS from the button rect. */
 .dropdown { position: relative; }
 .dd-btn {
   width: 100%;
@@ -589,10 +614,7 @@ section, header, footer, main { position: relative; z-index: 1; }
 }
 .dd-current img { width: 18px; height: 13px; border-radius: 2px; object-fit: cover; }
 .dd-panel {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  right: 0;
+  position: fixed;
   padding: 8px;
   background: rgba(19, 38, 33, 0.98);
   border: 1px solid var(--border-strong);
@@ -601,7 +623,7 @@ section, header, footer, main { position: relative; z-index: 1; }
   backdrop-filter: blur(20px);
   max-height: 320px;
   overflow-y: auto;
-  z-index: 20;
+  z-index: 200;
   display: none;
 }
 .dropdown.open .dd-panel { display: block; }
@@ -863,7 +885,7 @@ footer {
 .footer-brand .brand-line.dim { color: var(--fg-dim); font-size: 12px; margin-top: 4px; }
 .footer-cols {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 32px;
 }
 .footer-col { display: flex; flex-direction: column; gap: 6px; }
@@ -936,6 +958,53 @@ footer {
 
 .wallet-modal-title { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 8px; }
 .wallet-modal-sub { color: var(--fg-muted); font-size: 13px; margin: 0 0 24px; line-height: 1.55; }
+
+/* Wallet connect list (view=connect) */
+.wallet-connect-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wallet-option {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: rgba(14, 30, 26, 0.55);
+  color: var(--fg);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: border-color 0.15s, background 0.15s, transform 0.12s;
+  text-align: left;
+}
+.wallet-option:hover:not(:disabled) {
+  border-color: var(--tether);
+  background: rgba(47, 186, 139, 0.10);
+  transform: translateY(-1px);
+}
+.wallet-option:disabled { opacity: 0.5; cursor: not-allowed; }
+.wallet-option-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--bg-elev);
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+.wallet-option-body { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.wallet-option-title { font-size: 14px; font-weight: 600; }
+.wallet-option-sub { font-size: 12px; color: var(--fg-muted); line-height: 1.4; }
+.wallet-option-cta {
+  font-size: 12px;
+  color: var(--tether-strong);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.wallet-option.demo .wallet-option-icon { background: rgba(245, 184, 92, 0.14); color: var(--gold); }
 .wallet-modal-body { display: flex; flex-direction: column; gap: 16px; }
 .wallet-field { display: flex; flex-direction: column; gap: 4px; }
 .wallet-field.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
