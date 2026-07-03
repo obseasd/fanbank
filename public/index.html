@@ -4,7 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>FanBank · fan economy on Tether</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%E2%9A%BD%3C/text%3E%3C/svg%3E">
+  <link rel="icon" href="/public/logo.png" type="image/png" />
+  <link rel="apple-touch-icon" href="/public/logo.png" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/public/style.css" />
   <!-- ethers UMD for client-side signing via injected wallet -->
@@ -14,12 +15,8 @@
   <!-- ─── NAV ─── -->
   <header class="nav">
     <a class="brand" href="#top">
-      <span class="brand-mark">
-        <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="2" />
-          <path d="M16 2 L16 30 M2 16 L30 16" stroke="currentColor" stroke-width="1.5" opacity="0.5" />
-          <path d="M16 2 Q22 8 22 16 Q22 24 16 30 Q10 24 10 16 Q10 8 16 2 Z" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.7" />
-        </svg>
+      <span class="brand-mark brand-mark-img">
+        <img src="/public/logo.png" alt="FanBank" />
       </span>
       <span class="brand-text">
         <span class="brand-name">FanBank</span>
@@ -47,12 +44,10 @@
           <span class="accent">into a real economy.</span>
         </h1>
         <p class="lead">
-          FanBank is a self-custodial layer for football fans, built on the
-          Tether stack. Send USDt tips straight to your team's on-chain
-          address, rally your section into a shared pool with a chosen
-          payout policy, and back your gut on the next match through
-          parimutuel prediction markets. Every move settles on chain, in
-          USDt, from your own wallet.
+          FanBank is a self-custodial layer for football fans. Send USDt
+          tips straight to a team or a player, launch a football-related
+          fundraiser with your section, and back the outcome of the next
+          match. All in USDt, all signed from your own wallet.
         </p>
         <div class="hero-cta">
           <button id="hero-connect" class="btn primary lg">
@@ -196,7 +191,7 @@
         <div class="panel-head">
           <div>
             <h3>Open a group pool</h3>
-            <p class="panel-sub">Contributions accrue, the operator settles the split with a chosen policy.</p>
+            <p class="panel-sub">A shared fundraiser: watch-party fund, travel to a match, group gift for the coach. Fans contribute in USDt, the payout rule you pick decides who gets what at the end.</p>
           </div>
           <span class="panel-tag">Pool</span>
         </div>
@@ -238,8 +233,8 @@
   <section id="markets" class="panels">
     <div class="section-head">
       <span class="section-eyebrow">Predict</span>
-      <h2>Parimutuel markets on knockout fixtures.</h2>
-      <p>Odds are computed live from the pool: your USDt stake divided by the winning side's total, minus a 2% platform fee. Winners split the pool at the final whistle.</p>
+      <h2>Bet on match outcomes.</h2>
+      <p>For every upcoming match, three outcomes: <strong>home wins</strong>, <strong>draw</strong>, or <strong>away wins</strong>. Pick your side, choose your USDt stake, and the transfer signs from your wallet. When the match ends, winners split the pool proportionally to their stake, minus a 2% platform fee. Odds you see are live: your stake divided by the winning side's total.</p>
     </div>
     <div class="markets" id="markets-list"></div>
   </section>
@@ -249,7 +244,7 @@
     <div class="section-head">
       <span class="section-eyebrow">Verify</span>
       <h2>Audit journal.</h2>
-      <p>Every economic event is timestamped with an on-chain tx hash. Grep the raw feed at <a href="/api/journal" target="_blank" rel="noopener"><code>/api/journal</code></a> if you want the JSON.</p>
+      <p>Every economic event is timestamped with an on-chain transaction hash. Click any row to verify it on Etherscan.</p>
     </div>
     <div class="journal" id="journal"></div>
   </section>
@@ -258,7 +253,10 @@
   <footer>
     <div class="footer-inner">
       <div class="footer-brand">
-        <div class="brand-name">FanBank</div>
+        <div class="footer-brand-head">
+          <img src="/public/logo.png" alt="" class="footer-logo" />
+          <div class="brand-name">FanBank</div>
+        </div>
         <div class="brand-line">Fan economy on Tether.</div>
         <div class="brand-line dim">Self-custodial WDK wallet · tipping · pools · prediction markets.</div>
       </div>

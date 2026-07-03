@@ -608,26 +608,43 @@ async function refreshJournal () {
   }
 }
 
+function teamById (id) { return TEAMS.find(t => t.id === id) }
+function flagFor (id) {
+  const t = teamById(id)
+  return t?.iso ? `<img class="inline-flag" src="${FLAG_CDN(t.iso)}" alt="${t.name} flag" />` : ''
+}
+function teamLabel (id) {
+  const t = teamById(id)
+  return t ? `${flagFor(id)} ${t.name}` : id
+}
+function matchLabelWithFlags (matchLabelRaw) {
+  // matchLabelRaw is "home_id vs away_id" as strings; look up teams to
+  // decorate with flags + proper names.
+  const parts = String(matchLabelRaw || '').split(' vs ')
+  if (parts.length !== 2) return matchLabelRaw
+  return `${teamLabel(parts[0].trim())} <span class="vs-sep">vs</span> ${teamLabel(parts[1].trim())}`
+}
+
 function describeEvent (e) {
   switch (e.type) {
     case 'tip':
       return e.target === 'team'
-        ? `<span class="highlight">${fmtUsdt(e.amount)}</span> → ${e.teamName}`
-        : `<span class="highlight">${fmtUsdt(e.amount)}</span> → ${e.playerName} (${e.teamName})`
+        ? `<span class="highlight">${fmtUsdt(e.amount)}</span> → ${teamLabel(e.teamId)}`
+        : `<span class="highlight">${fmtUsdt(e.amount)}</span> → ${e.playerName} (${teamLabel(e.teamId)})`
     case 'pool-created':
-      return `pool "${e.purpose ?? '?'}" ${e.teamName ? '· ' + e.teamName : ''} · policy ${e.policy}`
+      return `pool <span class="highlight">"${e.purpose ?? '?'}"</span> ${e.teamId ? '· ' + teamLabel(e.teamId) : ''} · ${e.policy}`
     case 'pool-contribution':
       return `<span class="highlight">${fmtUsdt(e.amount)}</span> → pool ${e.poolId}`
     case 'pool-payout':
       return `payout <span class="highlight">${fmtUsdt(e.amount)}</span> → ${shortAddr(e.to)}`
     case 'pool-settled':
-      return `${e.policy} settle · ${fmtUsdt(e.totalUsdt)} across ${e.payouts} recipients`
+      return `${e.policy} settle · <span class="highlight">${fmtUsdt(e.totalUsdt)}</span> across ${e.payouts} recipients`
     case 'bet-placed':
-      return `bet <span class="highlight">${fmtUsdt(e.amount)}</span> on ${e.outcome} · ${e.matchLabel}`
+      return `bet <span class="highlight">${fmtUsdt(e.amount)}</span> on <strong>${e.outcome}</strong> · ${matchLabelWithFlags(e.matchLabel)}`
     case 'bet-payout':
       return `payout <span class="highlight">${fmtUsdt(e.amount)}</span> → ${shortAddr(e.winner)}`
     case 'market-settled':
-      return `${e.matchLabel} settled ${e.resultOutcome} ${e.resultScore ?? ''} · ${e.payouts} payouts`
+      return `${matchLabelWithFlags(e.matchLabel)} settled <strong>${e.resultOutcome}</strong> ${e.resultScore ?? ''} · ${e.payouts} payouts`
     default:
       return JSON.stringify(e).slice(0, 100)
   }
@@ -643,10 +660,12 @@ async function loadTeams () {
     [{ value: '', label: 'No team' }, ...options], () => {},
     { placeholder: 'No team', defaultValue: '' })
   poolPolicyDD = initDropdown($('[data-dropdown="pool-policy"]'), [
-    { value: 'equal', label: 'Equal split', sub: 'Each contributor gets the same share' },
-    { value: 'proportional', label: 'Proportional', sub: 'Share proportional to contribution' },
-    { value: 'winner-takes', label: 'Winner takes all', sub: 'Single recipient' },
-  ], () => {}, { placeholder: 'Equal split', defaultValue: 'equal' })
+    // Human-readable labels + real-world examples so a fan understands
+    // which one to pick without reading the docs.
+    { value: 'equal', label: 'Refund everyone equally', sub: 'Same amount back to each contributor. Use for cancelled events.' },
+    { value: 'proportional', label: 'Pay back share', sub: 'Everyone gets back their part of the pool. Use for savings clubs.' },
+    { value: 'winner-takes', label: 'One winner takes all', sub: 'Whole pool to one address. Use for prizes or gifts.' },
+  ], () => {}, { placeholder: 'Refund everyone equally', defaultValue: 'equal' })
 }
 
 async function loadMatches () {
@@ -678,13 +697,32 @@ $$('.wallet-option[data-connect="demo"]').forEach(el => el.addEventListener('cli
   catch (e) { toast({ level: 'err', title: 'Demo wallet unavailable', desc: e.message }) }
 }))
 
-// Boot sequence
-;(async () => {
-  await loadConfig()
-  await loadTeams()
-  await loadMatches()
-  await Promise.all([refreshStats(), refreshMarkets(), refreshPools(), refreshJournal()])
+// Boot sequence. Wrapped so that a single failed endpoint does not brick
+// the whole page — every step is retried a few times with backoff, and
+// visible errors go into a "server offline" banner rather than a scary
+// alert(). Local dev servers often take a couple of seconds after nodemon
+// restarts before /api/config responds.
+async function bootWithRetry (fn, label, tries = 4) {
+  let lastErr = null
+  for (let i = 0; i < tries; i++) {
+    try { return await fn() } catch (e) { lastErr = e; await new Promise(r => setTimeout(r, 400 * (i + 1))) }
+  }
+  console.warn(`[boot] ${label} still failing after ${tries} tries:`, lastErr?.message)
+  throw lastErr
+}
+
+async function boot () {
+  try {
+    await bootWithRetry(loadConfig, 'loadConfig')
+    await bootWithRetry(loadTeams, 'loadTeams')
+    await bootWithRetry(loadMatches, 'loadMatches')
+  } catch (e) {
+    toast({ level: 'err', title: 'Server offline', desc: 'Cannot reach the FanBank API. Start the local server (npm run dev) and refresh.' })
+    return
+  }
+  await Promise.allSettled([refreshStats(), refreshMarkets(), refreshPools(), refreshJournal()])
   showConnectView()  // no wallet connected on boot
   setInterval(() => { if (CONNECTED) refreshConnectedBalances() }, 30_000)
   setInterval(refreshMarkets, 20_000)
-})()
+}
+boot()
