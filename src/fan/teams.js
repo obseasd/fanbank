@@ -10,12 +10,16 @@
 /// custodian, no server-held funds, the tip goes exactly where the fan
 /// intended.
 
+/// Each team has an ISO 3166-1 alpha-2 code so the frontend can render
+/// flags from a reliable CDN (flagcdn.com serves SVG + PNG per country
+/// code) instead of relying on OS-level emoji-flag fonts, which do not
+/// render on Windows Chrome by default.
 export const TEAMS = [
   {
     id: 'france',
     name: 'France',
     nickname: 'Les Bleus',
-    flag: '🇫🇷',
+    iso: 'fr',
     color: '#0055A4',
     // Sepolia testnet demo addresses. Replace with the team's mainnet
     // treasury or federation wallet in production.
@@ -30,7 +34,7 @@ export const TEAMS = [
     id: 'argentina',
     name: 'Argentina',
     nickname: 'La Albiceleste',
-    flag: '🇦🇷',
+    iso: 'ar',
     color: '#75AADB',
     tipAddress: '0x000000000000000000000000000000000000bEEF',
     players: [
@@ -43,7 +47,9 @@ export const TEAMS = [
     id: 'england',
     name: 'England',
     nickname: 'Three Lions',
-    flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+    // No dedicated ISO code for England alone. gb-eng is the standard
+    // subdivision code that flagcdn.com serves.
+    iso: 'gb-eng',
     color: '#CE1124',
     tipAddress: '0x000000000000000000000000000000000000CAFE',
     players: [
@@ -56,7 +62,7 @@ export const TEAMS = [
     id: 'brazil',
     name: 'Brazil',
     nickname: 'Seleção',
-    flag: '🇧🇷',
+    iso: 'br',
     color: '#009C3B',
     tipAddress: '0x000000000000000000000000000000000000BABE',
     players: [
@@ -69,7 +75,7 @@ export const TEAMS = [
     id: 'spain',
     name: 'Spain',
     nickname: 'La Roja',
-    flag: '🇪🇸',
+    iso: 'es',
     color: '#AA151B',
     tipAddress: '0x000000000000000000000000000000000000C0DE',
     players: [
@@ -82,8 +88,8 @@ export const TEAMS = [
     id: 'germany',
     name: 'Germany',
     nickname: 'Die Mannschaft',
-    flag: '🇩🇪',
-    color: '#000000',
+    iso: 'de',
+    color: '#DD0000',
     tipAddress: '0x000000000000000000000000000000000000F00D',
     players: [
       { name: 'Florian Wirtz', role: 'midfielder', tipAddress: '0x0000000000000000000000000000000000000010' },

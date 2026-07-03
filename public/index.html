@@ -3,82 +3,376 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>FanBank — Fan economy on Tether</title>
+  <title>FanBank · fan economy on Tether</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%E2%9A%BD%3C/text%3E%3C/svg%3E">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/public/style.css" />
 </head>
 <body>
+  <!-- ─── NAV ─── -->
   <header class="nav">
-    <div class="brand">
-      <span class="logo">⚽</span>
-      <span class="title">FanBank</span>
-      <span class="tag">fan economy on Tether</span>
-    </div>
-    <div class="wallet" id="wallet-box">loading…</div>
+    <a class="brand" href="#top">
+      <span class="brand-mark">
+        <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="2" />
+          <path d="M16 2 L16 30 M2 16 L30 16" stroke="currentColor" stroke-width="1.5" opacity="0.5" />
+          <path d="M16 2 Q22 8 22 16 Q22 24 16 30 Q10 24 10 16 Q10 8 16 2 Z" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.7" />
+        </svg>
+      </span>
+      <span class="brand-text">
+        <span class="brand-name">FanBank</span>
+        <span class="brand-tag">fan economy on Tether</span>
+      </span>
+    </a>
+    <nav class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#teams">Teams</a>
+      <a href="#markets">Markets</a>
+      <a href="#audit">Audit</a>
+    </nav>
+    <button id="wallet-pill" class="wallet-pill" type="button">
+      <span class="dot"></span>
+      <span class="label">Connect wallet</span>
+    </button>
   </header>
 
-  <main>
-    <section class="hero">
-      <h1>Tip your team. Pool with your section. Bet on the match.<br/><span class="accent">One WDK wallet. All USDt.</span></h1>
-      <p class="lead">
-        Built for the Tether Developers Cup. Everything you see here signs from a
-        single BIP-39 seed loaded into the Tether WDK. No custodian, no server-held
-        funds, no wallet popups until the moment you send USDt.
-      </p>
-    </section>
+  <!-- ─── HERO ─── -->
+  <section id="top" class="hero">
+    <div class="hero-inner">
+      <div class="hero-copy">
+        <div class="hero-eyebrow">
+          <span class="badge-live">
+            <span class="pulse"></span>
+            Live on Sepolia
+          </span>
+          <span class="badge-hackathon">Built for the Tether Developers Cup</span>
+        </div>
+        <h1>
+          Tip your team. Pool with your section.<br />
+          <span class="accent">Bet the match, all in USDt.</span>
+        </h1>
+        <p class="lead">
+          FanBank turns being a fan into a real economy. Send a tip to your national
+          team in one click, rally your section around a shared pool, back your gut
+          on the next quarter-final. Everything settles in USDt on the Tether stack,
+          you hold your own keys, no app in the middle.
+        </p>
+        <div class="hero-cta">
+          <button id="hero-cta-primary" class="btn primary lg">
+            <span>Get started</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+          <a href="#how" class="btn ghost lg">See how it works</a>
+        </div>
+        <div class="hero-trust">
+          <span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>
+            Self-custodial via Tether WDK
+          </span>
+          <span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            Every USDt tx on chain
+          </span>
+          <span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            Open source, MIT
+          </span>
+        </div>
+      </div>
 
-    <section class="stats">
-      <div class="stat"><div class="v" id="stat-tips">0</div><div class="k">Tips sent</div></div>
-      <div class="stat"><div class="v" id="stat-tip-vol">0 USDt</div><div class="k">Tip volume</div></div>
-      <div class="stat"><div class="v" id="stat-bets">0</div><div class="k">Bets placed</div></div>
-      <div class="stat"><div class="v" id="stat-bet-vol">0 USDt</div><div class="k">Bet volume</div></div>
-    </section>
+      <!-- Hero side card: live wallet snapshot -->
+      <aside class="hero-side">
+        <div class="mini-card">
+          <div class="mini-header">
+            <span class="mini-title">Your wallet</span>
+            <span class="mini-badge" id="mini-wallet-badge">demo mode</span>
+          </div>
+          <div class="mini-usdt">
+            <span class="mini-usdt-value" id="mini-usdt">— USDt</span>
+            <span class="mini-usdt-sub" id="mini-address">no address yet</span>
+          </div>
+          <div class="mini-actions">
+            <button class="btn secondary sm" id="mini-copy">Copy address</button>
+            <a id="mini-explorer" class="btn ghost sm" target="_blank" rel="noopener">On Etherscan ↗</a>
+          </div>
+          <div class="mini-footer">
+            Signs from a BIP-39 seed loaded via
+            <a href="https://wdk.tether.io" target="_blank" rel="noopener">Tether WDK</a>.
+            The seed never leaves your device.
+          </div>
+        </div>
+      </aside>
+    </div>
+  </section>
 
-    <section class="cards">
-      <div class="card">
-        <h2>Tip a team</h2>
-        <p>Send USDt straight to a national team's tip address. One tx, self-custodial.</p>
-        <div class="row">
-          <select id="tip-team"></select>
-          <input id="tip-amount" type="number" min="0.01" step="0.01" placeholder="Amount USDt" />
-          <button id="tip-btn" class="primary">Tip</button>
+  <!-- ─── STATS STRIP ─── -->
+  <section class="stats-strip">
+    <div class="stat">
+      <div class="stat-value" id="stat-tips">0</div>
+      <div class="stat-label">Tips sent</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value" id="stat-tip-vol">0 USDt</div>
+      <div class="stat-label">Tip volume</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value" id="stat-bets">0</div>
+      <div class="stat-label">Bets placed</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value" id="stat-bet-vol">0 USDt</div>
+      <div class="stat-label">Bet volume</div>
+    </div>
+  </section>
+
+  <!-- ─── HOW IT WORKS ─── -->
+  <section id="how" class="how">
+    <div class="section-head">
+      <span class="section-eyebrow">01 — 02 — 03</span>
+      <h2>Three moves. That's the app.</h2>
+      <p>Everything below signs from your own wallet. No custodian holds your USDt, no server sees your seed. Judges and users can audit every tx from the journal at the bottom of the page.</p>
+    </div>
+    <div class="how-grid">
+      <div class="how-card">
+        <div class="how-idx">01</div>
+        <div class="how-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2C6 6 4 10 4 14a8 8 0 0 0 16 0c0-4-2-8-8-12z"/>
+            <path d="M12 22V12"/>
+          </svg>
+        </div>
+        <h3>Tip a team or a player</h3>
+        <p>Pick a national team from the picker, choose an amount, one signed USDt transfer goes straight to their tip address. No intermediary, no bridge.</p>
+      </div>
+      <div class="how-card">
+        <div class="how-idx">02</div>
+        <div class="how-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="9" cy="10" r="4"/>
+            <path d="M17 11a4 4 0 1 0 0-8"/>
+            <path d="M2 20c0-3.31 3.13-6 7-6s7 2.69 7 6"/>
+            <path d="M17 20c0-2.5 1.5-4 4-4"/>
+          </svg>
+        </div>
+        <h3>Pool with your section</h3>
+        <p>Open a shared pool ("Team France Berlin trip"). Fans contribute in USDt, the split policy (equal, proportional, winner-takes) is enforced at payout. Auditable end to end.</p>
+      </div>
+      <div class="how-card">
+        <div class="how-idx">03</div>
+        <div class="how-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12h4l3-8 4 16 3-8h4"/>
+          </svg>
+        </div>
+        <h3>Bet the match</h3>
+        <p>Parimutuel markets on knockout fixtures. Every stake is a real USDt transfer, odds recompute live from the pool, winners split at the final whistle with a 2% platform fee.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── TIP + POOL PANELS ─── -->
+  <section id="teams" class="panels">
+    <div class="section-head">
+      <span class="section-eyebrow">Play</span>
+      <h2>Send a tip. Rally a pool.</h2>
+      <p>Both flows sign a live USDt transfer on Sepolia via your WDK wallet. Cancel anytime, nothing happens without your signature.</p>
+    </div>
+    <div class="panel-grid">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h3>Tip a team</h3>
+            <p class="panel-sub">One tx, straight to the team's on-chain tip address.</p>
+          </div>
+          <span class="panel-tag">USDt</span>
+        </div>
+        <div class="form-row">
+          <div class="field field-team">
+            <label>Team</label>
+            <div class="dropdown" data-dropdown="tip-team">
+              <button class="dd-btn" type="button">
+                <span class="dd-current">Pick a team</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <div class="dd-panel" role="listbox"></div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Amount</label>
+            <div class="input-usdt">
+              <input id="tip-amount" type="number" min="0.01" step="0.01" placeholder="0.00" />
+              <span>USDt</span>
+            </div>
+          </div>
+          <button id="tip-btn" class="btn primary">
+            <span>Send tip</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+          </button>
         </div>
         <div class="hint" id="tip-hint"></div>
       </div>
 
-      <div class="card">
-        <h2>Open a group pool</h2>
-        <p>Rally your section. Contributions accrue, the pool operator settles the split at the whistle.</p>
-        <div class="row">
-          <input id="pool-purpose" placeholder="Purpose (watch-party fund, semi-final tickets…)" />
-          <select id="pool-policy">
-            <option value="equal">Split: equal</option>
-            <option value="proportional">Split: proportional to contribution</option>
-            <option value="winner-takes">Winner takes all</option>
-          </select>
-          <select id="pool-team"></select>
-          <button id="pool-create-btn" class="primary">Open</button>
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h3>Open a group pool</h3>
+            <p class="panel-sub">Contributions accrue, the operator settles the split with a chosen policy.</p>
+          </div>
+          <span class="panel-tag">Pool</span>
         </div>
-        <div id="pools-list" class="pools-list"></div>
+        <div class="form-row">
+          <div class="field field-purpose">
+            <label>Purpose</label>
+            <input id="pool-purpose" placeholder="Watch-party fund, semi-final tickets…" />
+          </div>
+          <div class="field">
+            <label>Split policy</label>
+            <div class="dropdown" data-dropdown="pool-policy">
+              <button class="dd-btn" type="button">
+                <span class="dd-current">Equal split</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <div class="dd-panel" role="listbox">
+                <div class="dd-item" data-value="equal">
+                  <div class="dd-item-body">
+                    <span class="dd-item-title">Equal split</span>
+                    <span class="dd-item-sub">Every contributor gets the same share, regardless of amount.</span>
+                  </div>
+                </div>
+                <div class="dd-item" data-value="proportional">
+                  <div class="dd-item-body">
+                    <span class="dd-item-title">Proportional</span>
+                    <span class="dd-item-sub">Payout matches each contributor's share of the pool.</span>
+                  </div>
+                </div>
+                <div class="dd-item" data-value="winner-takes">
+                  <div class="dd-item-body">
+                    <span class="dd-item-title">Winner takes all</span>
+                    <span class="dd-item-sub">One address collects the whole pool at payout.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Team</label>
+            <div class="dropdown" data-dropdown="pool-team">
+              <button class="dd-btn" type="button">
+                <span class="dd-current">No team</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <div class="dd-panel" role="listbox"></div>
+            </div>
+          </div>
+          <button id="pool-create-btn" class="btn primary">
+            <span>Open pool</span>
+          </button>
+        </div>
+        <div id="pools-list" class="rows-list"></div>
       </div>
+    </div>
+  </section>
 
-      <div class="card wide">
-        <h2>Match prediction markets</h2>
-        <p>Parimutuel odds computed live from every bet's USDt stake. Winners split the pool at the final whistle, 2% platform fee.</p>
-        <div id="markets"></div>
-      </div>
+  <!-- ─── PREDICTION MARKETS ─── -->
+  <section id="markets" class="panels">
+    <div class="section-head">
+      <span class="section-eyebrow">Predict</span>
+      <h2>Parimutuel markets on knockout fixtures.</h2>
+      <p>Odds are computed live from the pool: your USDt stake divided by the winning side's total, minus a 2% platform fee. Winners split the pool at the final whistle.</p>
+    </div>
+    <div class="markets" id="markets-list"></div>
+  </section>
 
-      <div class="card wide">
-        <h2>Audit journal</h2>
-        <p>Every economic event is timestamped and tx-hashed. Judges can grep this.</p>
-        <div id="journal"></div>
-      </div>
-    </section>
-  </main>
+  <!-- ─── JOURNAL ─── -->
+  <section id="audit" class="panels">
+    <div class="section-head">
+      <span class="section-eyebrow">Verify</span>
+      <h2>Audit journal.</h2>
+      <p>Every economic event is timestamped with an on-chain tx hash. Grep the raw feed at <a href="/api/journal" target="_blank" rel="noopener"><code>/api/journal</code></a> if you want the JSON.</p>
+    </div>
+    <div class="journal" id="journal"></div>
+  </section>
 
+  <!-- ─── FOOTER ─── -->
   <footer>
-    <span>FanBank · Tether WDK · self-custodial fan economy · Apache-2.0</span>
-    <span>Built for the <a href="https://dorahacks.io/hackathon/tether-developers-cup/detail" target="_blank" rel="noopener">Tether Developers Cup</a></span>
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <div class="brand-name">FanBank</div>
+        <div class="brand-line">Fan economy on Tether.</div>
+        <div class="brand-line dim">Self-custodial WDK wallet · tipping · pools · prediction markets.</div>
+      </div>
+      <div class="footer-cols">
+        <div class="footer-col">
+          <div class="footer-col-head">Product</div>
+          <a href="#top">Overview</a>
+          <a href="#how">How it works</a>
+          <a href="#markets">Live markets</a>
+          <a href="#audit">Audit journal</a>
+        </div>
+        <div class="footer-col">
+          <div class="footer-col-head">Stack</div>
+          <a href="https://wdk.tether.io" target="_blank" rel="noopener">Tether WDK</a>
+          <a href="https://tether.to" target="_blank" rel="noopener">USDt</a>
+          <a href="https://github.com/obseasd/fanbank" target="_blank" rel="noopener">GitHub</a>
+          <a href="/api/health" target="_blank" rel="noopener">Health endpoint</a>
+        </div>
+        <div class="footer-col">
+          <div class="footer-col-head">Hackathon</div>
+          <a href="https://dorahacks.io/hackathon/tether-developers-cup/detail" target="_blank" rel="noopener">Tether Developers Cup</a>
+          <a href="https://dorahacks.io/hackathon/tether-developers-cup/tracks" target="_blank" rel="noopener">Tracks</a>
+          <span>Track: WDK</span>
+        </div>
+      </div>
+    </div>
+    <div class="footer-legal">
+      © 2026 FanBank · Apache-2.0 · Testnet demo, not financial advice
+    </div>
   </footer>
+
+  <!-- ─── WALLET MODAL ─── -->
+  <div id="wallet-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel wallet-modal-panel">
+      <button class="modal-close" data-close type="button" aria-label="Close">×</button>
+      <div class="wallet-modal-head">
+        <div class="wallet-modal-title">Your FanBank wallet</div>
+        <p class="wallet-modal-sub">This is the wallet the server signs from via the Tether WDK. In production every fan opens their own seed on device; the demo shares one wallet so judges can walk the flow without setup.</p>
+      </div>
+      <div class="wallet-modal-body">
+        <div class="wallet-field">
+          <span class="wallet-field-label">Address</span>
+          <div class="wallet-field-value mono" id="modal-address">…</div>
+        </div>
+        <div class="wallet-field row">
+          <div>
+            <span class="wallet-field-label">USDt balance</span>
+            <div class="wallet-field-value" id="modal-usdt">…</div>
+          </div>
+          <div>
+            <span class="wallet-field-label">Gas (ETH)</span>
+            <div class="wallet-field-value" id="modal-gas">…</div>
+          </div>
+        </div>
+        <div class="wallet-field">
+          <span class="wallet-field-label">Chain</span>
+          <div class="wallet-field-value" id="modal-chain">Sepolia · chainId 11155111</div>
+        </div>
+        <div class="wallet-actions">
+          <button class="btn secondary" id="modal-copy">Copy address</button>
+          <a class="btn primary" id="modal-explorer" target="_blank" rel="noopener">View on Etherscan ↗</a>
+        </div>
+      </div>
+      <div class="wallet-modal-foot">
+        <div class="wallet-modal-note">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+          Every tx below is signed by this wallet via the Tether WDK. Balances update after each confirmation.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── TOAST HOST ─── -->
+  <div id="toasts" class="toast-host"></div>
 
   <script src="/public/app.js"></script>
 </body>
