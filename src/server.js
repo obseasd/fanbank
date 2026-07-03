@@ -1,0 +1,215 @@
+/// FanBank HTTP server.
+///
+/// Thin REST surface over the wallet + fan-economy modules. The web
+/// dashboard is served from /public and calls into these endpoints
+/// through fetch. Every state-changing endpoint routes through the WDK
+/// wallet loaded from WDK_SEED at boot; the private key never touches
+/// the wire.
+///
+/// Because the operator runs one wallet for the demo, ALL bets, pool
+/// contributions, and tips currently flow to that same address (the
+/// wallet is both the fan and the escrow). This is a scoping compromise
+/// for Round of 16; the Quarter-Final scope introduces per-fan seeds
+/// so each visitor has their own custody separate from the operator.
+
+import 'dotenv/config'
+import express from 'express'
+import rateLimit from 'express-rate-limit'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { createFanWallet } from './wdk/wallet.js'
+import { TEAMS, getTeam } from './fan/teams.js'
+import { assertSchedule, listMatches, settleMatch, getMatch } from './fan/matches.js'
+import { tipTeam, tipPlayer } from './fan/tipping.js'
+import { createPool, contribute, computeSplit, payout, listPools } from './fan/pool.js'
+import { placeBet, marketState, settleMarket, snapshotAllMarkets } from './fan/prediction.js'
+import { list as journalList, stats as journalStats } from './fan/journal.js'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const app = express()
+app.use(express.json({ limit: '64kb' }))
+app.use('/public', express.static(path.resolve(__dirname, '..', 'public')))
+app.use('/', express.static(path.resolve(__dirname, '..', 'public')))
+
+// Rate limit anything that costs a tx. Fan-economy demo runs on testnet
+// so we're not scared of casual traffic, but a script that hammers
+// /tip/team a thousand times would drain the operator gas balance.
+const txLimit = rateLimit({ windowMs: 60_000, max: 20 })
+
+let wallet = null
+
+async function bootWallet () {
+  assertSchedule()
+  wallet = await createFanWallet()
+  console.log(`[fanbank] wallet ready ${wallet.address}`)
+}
+
+/// Every endpoint that needs the wallet checks it here so a boot failure
+/// surfaces as a clean 503 instead of an unhandled TypeError.
+function requireWallet (res) {
+  if (!wallet) {
+    res.status(503).json({ error: 'Wallet not initialized. Check WDK_SEED / RPC_URL.' })
+    return false
+  }
+  return true
+}
+
+// ─── Public read-only ───
+
+app.get('/api/health', (_req, res) => {
+  res.json({
+    status: wallet ? 'ok' : 'booting',
+    walletAddress: wallet?.address ?? null,
+    chainRpc: wallet?.rpcUrl ?? null,
+    usdt: wallet?.usdtAddress ?? null,
+  })
+})
+
+app.get('/api/teams', (_req, res) => res.json({ teams: TEAMS }))
+app.get('/api/matches', (_req, res) => res.json({ matches: listMatches() }))
+app.get('/api/match/:id', (req, res) => {
+  const m = getMatch(req.params.id)
+  if (!m) return res.status(404).json({ error: 'match not found' })
+  res.json(m)
+})
+app.get('/api/markets', async (_req, res) => {
+  try { res.json({ markets: await snapshotAllMarkets() }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+app.get('/api/market/:matchId', async (req, res) => {
+  try { res.json(await marketState(req.params.matchId)) }
+  catch (e) { res.status(400).json({ error: e.message }) }
+})
+app.get('/api/pools', async (_req, res) => {
+  try { res.json({ pools: await listPools() }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+app.get('/api/pool/:id/split', async (req, res) => {
+  try { res.json(await computeSplit(req.params.id)) }
+  catch (e) { res.status(400).json({ error: e.message }) }
+})
+app.get('/api/journal', async (req, res) => {
+  const filter = {}
+  for (const k of ['type', 'matchId', 'poolId', 'teamId']) {
+    if (req.query[k]) filter[k] = String(req.query[k])
+  }
+  try { res.json({ entries: await journalList(filter) }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+app.get('/api/stats', async (_req, res) => {
+  try { res.json(await journalStats()) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+app.get('/api/wallet', async (_req, res) => {
+  if (!requireWallet(res)) return
+  try {
+    const [usdt, gas] = await Promise.all([wallet.getUsdtBalance(), wallet.getGasBalance()])
+    res.json({
+      address: wallet.address,
+      chainRpc: wallet.rpcUrl,
+      usdt,
+      gas,
+      info: wallet.getInfo(),
+    })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// ─── State-changing (require wallet) ───
+
+app.post('/api/tip/team', txLimit, async (req, res) => {
+  if (!requireWallet(res)) return
+  try {
+    const { teamId, amount } = req.body ?? {}
+    const r = await tipTeam(wallet, teamId, Number(amount))
+    res.json(r)
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+
+app.post('/api/tip/player', txLimit, async (req, res) => {
+  if (!requireWallet(res)) return
+  try {
+    const { teamId, playerName, amount } = req.body ?? {}
+    const r = await tipPlayer(wallet, teamId, playerName, Number(amount))
+    res.json(r)
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+
+app.post('/api/pool/create', async (req, res) => {
+  if (!requireWallet(res)) return
+  try {
+    const { teamId, purpose, policy, payoutBefore } = req.body ?? {}
+    const r = await createPool({
+      operator: wallet.address,
+      teamId,
+      purpose,
+      policy,
+      payoutBefore,
+    })
+    res.json(r)
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+
+app.post('/api/pool/:id/contribute', txLimit, async (req, res) => {
+  if (!requireWallet(res)) return
+  try {
+    const { amount } = req.body ?? {}
+    const r = await contribute(wallet, {
+      poolId: req.params.id,
+      operatorAddress: wallet.address,
+      amountUsdt: Number(amount),
+    })
+    res.json(r)
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+
+app.post('/api/pool/:id/payout', txLimit, async (req, res) => {
+  if (!requireWallet(res)) return
+  try {
+    const { customSplits, winnerAddress } = req.body ?? {}
+    const r = await payout(wallet, req.params.id, { customSplits, winnerAddress })
+    res.json(r)
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+
+app.post('/api/bet', txLimit, async (req, res) => {
+  if (!requireWallet(res)) return
+  try {
+    const { matchId, outcome, amount } = req.body ?? {}
+    const r = await placeBet(wallet, {
+      matchId,
+      outcome,
+      amountUsdt: Number(amount),
+      escrowAddress: wallet.address,
+    })
+    res.json(r)
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+
+/// Demo-only: mark a match as settled with a given outcome. Real
+/// production would replace this with a signed oracle push.
+app.post('/api/match/:id/settle-demo', async (req, res) => {
+  try {
+    const { outcome, score } = req.body ?? {}
+    res.json(settleMatch(req.params.id, { outcome, score }))
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+
+app.post('/api/market/:matchId/settle', txLimit, async (req, res) => {
+  if (!requireWallet(res)) return
+  try { res.json(await settleMarket(wallet, req.params.matchId)) }
+  catch (e) { res.status(400).json({ error: e.message }) }
+})
+
+const port = Number(process.env.PORT || 3000)
+bootWallet().then(() => {
+  app.listen(port, () => {
+    console.log(`[fanbank] listening on http://localhost:${port}`)
+  })
+}).catch(err => {
+  console.error('[fanbank] wallet boot failed:', err.message)
+  // Still start the server so the dashboard can render the error state
+  app.listen(port, () => {
+    console.log(`[fanbank] listening on http://localhost:${port} (wallet OFFLINE)`)
+  })
+})

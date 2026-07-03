@@ -1,0 +1,37 @@
+{
+  "name": "fanbank",
+  "version": "0.1.0",
+  "description": "Fan economy on Tether. Self-custodial wallet + tipping + group pools + match prediction, built with Tether WDK for the Tether Developers Cup",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "node src/server.js",
+    "start": "NODE_ENV=production node src/server.js",
+    "test": "node --test src/*.test.js src/**/*.test.js",
+    "demo": "bash scripts/demo.sh"
+  },
+  "keywords": [
+    "wdk",
+    "tether",
+    "usdt",
+    "football",
+    "fans",
+    "tipping",
+    "prediction",
+    "openclaw"
+  ],
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
+    "@tetherto/wdk-wallet-evm": "^1.0.0-beta.8",
+    "dotenv": "^16.6.1",
+    "ethers": "^6.16.0",
+    "express": "^4.22.1",
+    "express-rate-limit": "^8.2.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}

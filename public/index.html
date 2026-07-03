@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FanBank — Fan economy on Tether</title>
+  <link rel="stylesheet" href="/public/style.css" />
+</head>
+<body>
+  <header class="nav">
+    <div class="brand">
+      <span class="logo">⚽</span>
+      <span class="title">FanBank</span>
+      <span class="tag">fan economy on Tether</span>
+    </div>
+    <div class="wallet" id="wallet-box">loading…</div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1>Tip your team. Pool with your section. Bet on the match.<br/><span class="accent">One WDK wallet. All USDt.</span></h1>
+      <p class="lead">
+        Built for the Tether Developers Cup. Everything you see here signs from a
+        single BIP-39 seed loaded into the Tether WDK. No custodian, no server-held
+        funds, no wallet popups until the moment you send USDt.
+      </p>
+    </section>
+
+    <section class="stats">
+      <div class="stat"><div class="v" id="stat-tips">0</div><div class="k">Tips sent</div></div>
+      <div class="stat"><div class="v" id="stat-tip-vol">0 USDt</div><div class="k">Tip volume</div></div>
+      <div class="stat"><div class="v" id="stat-bets">0</div><div class="k">Bets placed</div></div>
+      <div class="stat"><div class="v" id="stat-bet-vol">0 USDt</div><div class="k">Bet volume</div></div>
+    </section>
+
+    <section class="cards">
+      <div class="card">
+        <h2>Tip a team</h2>
+        <p>Send USDt straight to a national team's tip address. One tx, self-custodial.</p>
+        <div class="row">
+          <select id="tip-team"></select>
+          <input id="tip-amount" type="number" min="0.01" step="0.01" placeholder="Amount USDt" />
+          <button id="tip-btn" class="primary">Tip</button>
+        </div>
+        <div class="hint" id="tip-hint"></div>
+      </div>
+
+      <div class="card">
+        <h2>Open a group pool</h2>
+        <p>Rally your section. Contributions accrue, the pool operator settles the split at the whistle.</p>
+        <div class="row">
+          <input id="pool-purpose" placeholder="Purpose (watch-party fund, semi-final tickets…)" />
+          <select id="pool-policy">
+            <option value="equal">Split: equal</option>
+            <option value="proportional">Split: proportional to contribution</option>
+            <option value="winner-takes">Winner takes all</option>
+          </select>
+          <select id="pool-team"></select>
+          <button id="pool-create-btn" class="primary">Open</button>
+        </div>
+        <div id="pools-list" class="pools-list"></div>
+      </div>
+
+      <div class="card wide">
+        <h2>Match prediction markets</h2>
+        <p>Parimutuel odds computed live from every bet's USDt stake. Winners split the pool at the final whistle, 2% platform fee.</p>
+        <div id="markets"></div>
+      </div>
+
+      <div class="card wide">
+        <h2>Audit journal</h2>
+        <p>Every economic event is timestamped and tx-hashed. Judges can grep this.</p>
+        <div id="journal"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>FanBank · Tether WDK · self-custodial fan economy · Apache-2.0</span>
+    <span>Built for the <a href="https://dorahacks.io/hackathon/tether-developers-cup/detail" target="_blank" rel="noopener">Tether Developers Cup</a></span>
+  </footer>
+
+  <script src="/public/app.js"></script>
+</body>
+</html>
