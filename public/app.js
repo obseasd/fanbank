@@ -21,7 +21,18 @@ const ERC20_ABI = [
   'function transfer(address to, uint256 amount) returns (bool)',
 ]
 
-let ethers = window.ethers  // loaded via UMD script tag
+// Lazily read window.ethers each access so a slow UMD load does not
+// freeze us to a stale (undefined) reference captured at script eval.
+// The Proxy forwards property reads and instantiations to whatever is
+// on window.ethers right now, with a friendly error if it never loaded.
+const ethers = new Proxy({}, {
+  get (_t, prop) {
+    if (!window.ethers) {
+      throw new Error('ethers library did not load. Refresh the page or disable a script blocker.')
+    }
+    return window.ethers[prop]
+  },
+})
 let CONFIG = null            // { chainId, usdt, escrow, explorer, ... }
 let CONNECTED = null         // { mode: 'external'|'demo', address, provider, signer, usdt, gas }
 let TEAMS = []
