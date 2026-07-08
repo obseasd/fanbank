@@ -74,6 +74,7 @@ async function api (path, opts = {}) {
  * a bet is never double-counted once the server picks it up.
  */
 const CLIENT_JOURNAL_KEY = 'fanbank-client-journal-v1'
+const HIDDEN_POOLS_KEY = 'fanbank-hidden-pools-v1'
 
 function loadClientEvents () {
   try {
@@ -87,6 +88,26 @@ function pushClientEvent (event) {
   const arr = loadClientEvents()
   arr.push({ ts: Date.now(), status: 'success', source: 'local-optimistic', ...event })
   try { localStorage.setItem(CLIENT_JOURNAL_KEY, JSON.stringify(arr)) } catch { /* quota full */ }
+}
+
+/// Client-side "delete" for pools. The server has no delete endpoint
+/// (pool history is append-only for audit), so removal is soft: hide the
+/// pool from the display via a local blocklist AND purge any locally
+/// mirrored events for that pool from the journal cache. On chain
+/// contributions still exist as USDt txs and are still verifiable on
+/// Etherscan, they just stop showing up in this browser.
+function loadHiddenPools () {
+  try {
+    const arr = JSON.parse(localStorage.getItem(HIDDEN_POOLS_KEY) || '[]')
+    return new Set(Array.isArray(arr) ? arr : [])
+  } catch { return new Set() }
+}
+function hidePool (poolId) {
+  const blocked = loadHiddenPools()
+  blocked.add(poolId)
+  try { localStorage.setItem(HIDDEN_POOLS_KEY, JSON.stringify([...blocked])) } catch {}
+  const kept = loadClientEvents().filter(e => e.poolId !== poolId)
+  try { localStorage.setItem(CLIENT_JOURNAL_KEY, JSON.stringify(kept)) } catch {}
 }
 
 async function pendingLocalEvents () {
@@ -811,10 +832,13 @@ async function refreshPools () {
         if (p) p.settled = true
       }
     }
-    const pools = [...poolsMap.values()].map(p => ({
-      ...p,
-      contributors: p.contributors.size,
-    }))
+    const hidden = loadHiddenPools()
+    const pools = [...poolsMap.values()]
+      .filter(p => !hidden.has(p.poolId))
+      .map(p => ({
+        ...p,
+        contributors: p.contributors.size,
+      }))
     const root = $('#pools-list')
     if (!pools.length) { root.innerHTML = ''; return }
     root.innerHTML = pools.map(p => {
@@ -830,11 +854,17 @@ async function refreshPools () {
           ${p.settled
             ? '<span class="settled-badge">settled</span>'
             : `<button class="btn ghost sm" data-payout="${p.poolId}">Payout</button>`}
+          <button class="pool-delete" data-delete="${p.poolId}" aria-label="Remove pool from view" title="Remove pool from view">&times;</button>
         </div>
       `
     }).join('')
     $$('button[data-contribute]').forEach(b => b.addEventListener('click', () => contributeToPool(b.dataset.contribute)))
     $$('button[data-payout]').forEach(b => b.addEventListener('click', () => payoutPool(b.dataset.payout)))
+    $$('button[data-delete]').forEach(b => b.addEventListener('click', () => {
+      hidePool(b.dataset.delete)
+      toast({ level: 'ok', title: 'Pool removed from view', desc: 'On-chain contributions still verifiable on Etherscan.' })
+      refreshPools().catch(() => {})
+    }))
   } catch (e) {
     toast({ level: 'err', title: 'Pool list failed', desc: e.message })
   }

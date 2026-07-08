@@ -992,6 +992,28 @@ section, header, footer, main { position: relative; z-index: 1; }
   text-transform: uppercase;
   letter-spacing: 0.14em;
 }
+.pool-row .pool-delete {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg-dim);
+  border-radius: 6px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.pool-row .pool-delete:hover {
+  color: var(--danger, #ff6a6a);
+  border-color: rgba(255, 106, 106, 0.35);
+  background: rgba(255, 106, 106, 0.06);
+}
+.pool-row .pool-delete:focus-visible {
+  outline: 2px solid var(--tether-strong);
+  outline-offset: 2px;
+}
 
 /* ─── Markets ─── */
 .markets {
