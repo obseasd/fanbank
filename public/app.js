@@ -221,7 +221,9 @@ async function connectDemo () {
     signer: null,
     provider: null,
   }
-  showConnectedView()
+  try { localStorage.setItem('fanbank-connected', '1') } catch {}
+  updatePillAndModal()
+  closeWalletModal()
 }
 
 async function refreshConnectedBalances () {
@@ -248,20 +250,24 @@ async function refreshConnectedBalances () {
 function updatePillAndModal () {
   const pill = $('#wallet-pill')
   const chip = $('#wallet-chip')
+  const heroConnect = $('#hero-connect')
 
   if (!CONNECTED) {
-    // Disconnected: show the big "Connect wallet" pill, hide the chip.
+    // Disconnected: show the big "Connect wallet" pill AND the hero CTA,
+    // hide the compact chip.
     pill.hidden = false
     if (chip) chip.hidden = true
+    if (heroConnect) heroConnect.hidden = false
     pill.classList.remove('ok', 'err')
     pill.querySelector('.label').textContent = 'Connect wallet'
     return
   }
 
-  // Connected: swap the pill out for the compact chip. The chip stays
-  // in the same slot on the right of the nav and opens the wallet modal
-  // on click (wired at the bottom of this file).
+  // Connected: swap the header pill out for the compact chip, and hide
+  // the big "Connect wallet" CTA in the hero since it becomes a dead
+  // signal once the wallet is already set up.
   pill.hidden = true
+  if (heroConnect) heroConnect.hidden = true
   if (chip) {
     chip.hidden = false
     chip.querySelector('.addr').textContent = shortAddr(CONNECTED.address)
@@ -764,34 +770,51 @@ async function submitPool () {
 
 async function refreshPools () {
   try {
-    const [{ pools }, pending] = await Promise.all([api('/api/pools'), pendingLocalEvents()])
-    const localContribs = pending.filter(e => e.type === 'pool-contribution')
-    const localCreated = pending.filter(e => e.type === 'pool-created')
-    // Fold pending contributions into the matching server pools first.
-    for (const p of pools) {
-      const forPool = localContribs.filter(c => c.poolId === p.poolId)
-      for (const c of forPool) {
-        p.totalUsdt = Number(p.totalUsdt || 0) + Number(c.amount || 0)
-        p.contributors = (p.contributors || 0) + 1
+    // Compute pools purely from the merged journal (server + local, dedup
+    // by hash). Trying to reconcile /api/pools with a separate
+    // /api/journal read fails on Vercel because the two endpoints can
+    // resolve to different Lambda instances with different /tmp state.
+    // Reading everything from one merged event log fixes that.
+    const [journal, localEvents] = await Promise.all([
+      api('/api/journal').then(r => r.entries || []).catch(() => []),
+      Promise.resolve(loadClientEvents()),
+    ])
+    const seen = new Set()
+    const merged = []
+    for (const e of [...journal, ...localEvents]) {
+      const key = e.hash || `${e.type}:${e.poolId || ''}:${e.ts || ''}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push(e)
+    }
+    const poolsMap = new Map()
+    for (const e of merged) {
+      if (e.type === 'pool-created') {
+        poolsMap.set(e.poolId, {
+          poolId: e.poolId,
+          teamId: e.teamId,
+          teamName: e.teamName,
+          purpose: e.purpose,
+          policy: e.policy,
+          totalUsdt: 0,
+          contributors: new Set(),
+          settled: false,
+        })
+      } else if (e.type === 'pool-contribution' && (e.status || 'success') === 'success') {
+        const p = poolsMap.get(e.poolId)
+        if (p) {
+          p.totalUsdt += Number(e.amount || 0)
+          if (e.from) p.contributors.add(e.from)
+        }
+      } else if (e.type === 'pool-settled') {
+        const p = poolsMap.get(e.poolId)
+        if (p) p.settled = true
       }
     }
-    // Then synthesize pool cards for locally-created pools the server has
-    // not yet reflected, seeding their totals from the local contributions.
-    const existingIds = new Set(pools.map(p => p.poolId))
-    for (const c of localCreated) {
-      if (existingIds.has(c.poolId)) continue
-      const seed = localContribs.filter(x => x.poolId === c.poolId)
-      pools.push({
-        poolId: c.poolId,
-        teamId: c.teamId,
-        teamName: c.teamName,
-        purpose: c.purpose,
-        policy: c.policy,
-        totalUsdt: seed.reduce((s, x) => s + Number(x.amount || 0), 0),
-        contributors: seed.length,
-        settled: false,
-      })
-    }
+    const pools = [...poolsMap.values()].map(p => ({
+      ...p,
+      contributors: p.contributors.size,
+    }))
     const root = $('#pools-list')
     if (!pools.length) { root.innerHTML = ''; return }
     root.innerHTML = pools.map(p => {
@@ -887,35 +910,54 @@ async function payoutPool (poolId) {
 /* ─── Markets ─── */
 async function refreshMarkets () {
   try {
-    const [{ markets }, pending] = await Promise.all([
-      api('/api/markets'),
-      pendingLocalEvents(),
+    // Same rationale as refreshPools: compute the market state from a
+    // merged journal (server + local, dedup by hash) so a bet placed on
+    // one Lambda instance still shows up when the next /api/markets read
+    // lands on a fresh instance with empty /tmp.
+    const [journal] = await Promise.all([
+      api('/api/journal').then(r => r.entries || []).catch(() => []),
     ])
-    // Fold any unconfirmed local bets into the server totals so a stake
-    // shows up immediately after the tx confirms, even if the server
-    // journal is on a different Lambda instance and has not caught up.
-    const pendingBets = pending.filter(e => e.type === 'bet-placed')
-    for (const m of markets) {
-      // Defensive: server should always send these but if a payload is
-      // missing them we hydrate a zeroed shape so the fold does not throw.
-      m.stakeByOutcome = m.stakeByOutcome || { home: 0, away: 0, draw: 0 }
-      m.odds = m.odds || { home: null, away: null, draw: null }
-      m.totalStakeUsdt = Number(m.totalStakeUsdt || 0)
-      const local = pendingBets.filter(b => b.matchId === m.matchId)
-      for (const b of local) {
+    const localEvents = loadClientEvents()
+    const seen = new Set()
+    const merged = []
+    for (const e of [...journal, ...localEvents]) {
+      const key = e.hash || `${e.type}:${e.matchId || ''}:${e.ts || ''}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push(e)
+    }
+    const bets = merged.filter(e => e.type === 'bet-placed' && (e.status || 'success') === 'success')
+    // Build a market row per known match. MATCHES is populated at boot
+    // from /api/matches which is deterministic (static schedule), so
+    // shape it here rather than trusting /api/markets aggregations.
+    const markets = MATCHES.map(m => {
+      const stakeByOutcome = { home: 0, away: 0, draw: 0 }
+      let total = 0
+      let count = 0
+      for (const b of bets) {
+        if (b.matchId !== m.id) continue
         const amt = Number(b.amount || 0)
         if (!amt) continue
-        m.totalStakeUsdt += amt
-        m.stakeByOutcome[b.outcome] = Number(m.stakeByOutcome[b.outcome] || 0) + amt
-        m.betsCount = (m.betsCount || 0) + 1
+        total += amt
+        stakeByOutcome[b.outcome] = (stakeByOutcome[b.outcome] || 0) + amt
+        count++
       }
-      // Always recompute odds from the (possibly augmented) stake map so
-      // the display stays consistent whether local bets applied or not.
+      const odds = {}
       for (const k of ['home', 'away', 'draw']) {
-        const st = Number(m.stakeByOutcome[k] || 0)
-        m.odds[k] = st > 0 ? m.totalStakeUsdt / st : null
+        odds[k] = stakeByOutcome[k] > 0 ? total / stakeByOutcome[k] : null
       }
-    }
+      return {
+        matchId: m.id,
+        matchLabel: `${m.home} vs ${m.away}`,
+        status: m.status,
+        resultOutcome: m.resultOutcome,
+        resultScore: m.resultScore,
+        totalStakeUsdt: total,
+        betsCount: count,
+        stakeByOutcome,
+        odds,
+      }
+    })
     const root = $('#markets-list')
     if (!markets.length) { root.innerHTML = '<div class="hint">No markets yet.</div>'; return }
     root.innerHTML = markets.map(m => marketRow(m)).join('')
