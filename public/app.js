@@ -173,7 +173,32 @@ async function connectInjected () {
   // Update UI state
   eth.on?.('accountsChanged', handleAccountsChanged)
   eth.on?.('chainChanged', () => location.reload())
-  showConnectedView()
+  // Remember that this browser has been connected before, so the next
+  // page load can silently reconnect via eth_accounts without popping
+  // MetaMask again.
+  try { localStorage.setItem('fanbank-connected', '1') } catch {}
+  updatePillAndModal()
+  // The visual result of a successful connect is the compact chip in the
+  // header. Keeping the modal open on top of it feels redundant, so we
+  // dismiss the modal as soon as the wallet is ready.
+  closeWalletModal()
+}
+
+/// Silent reconnect on page load: if MetaMask has already granted this
+/// origin access to an account (eth_accounts returns non-empty without
+/// prompting), rebuild the CONNECTED state so refresh does not force the
+/// user through the wallet modal again.
+async function tryAutoReconnect () {
+  if (!window.ethereum || !CONFIG) return
+  try {
+    if (localStorage.getItem('fanbank-connected') !== '1') return
+    const accounts = await window.ethereum.request({ method: 'eth_accounts' })
+    if (!accounts?.length) return
+    await connectInjected()
+  } catch (e) {
+    // Silent failure is fine; user can always click Connect wallet.
+    console.debug('[fanbank] auto-reconnect skipped:', e?.message)
+  }
 }
 
 function handleAccountsChanged (accounts) {
@@ -272,7 +297,9 @@ function disconnect () {
     try { window.ethereum.removeListener('accountsChanged', handleAccountsChanged) } catch {}
   }
   CONNECTED = null
+  try { localStorage.removeItem('fanbank-connected') } catch {}
   showConnectView()
+  updatePillAndModal()
   toast({ level: 'ok', title: 'Wallet disconnected' })
 }
 
@@ -714,8 +741,20 @@ async function submitPool () {
   const teamId = poolTeamDD.getValue() || null
   if (!purpose) return toast({ level: 'err', title: 'Pool needs a purpose' })
   try {
-    await api('/api/pool/create', { method: 'POST', body: { teamId, purpose, policy } })
+    const r = await api('/api/pool/create', { method: 'POST', body: { teamId, purpose, policy } })
     $('#pool-purpose').value = ''
+    // Mirror the pool creation into the local journal so refresh + cold
+    // Lambda instance do not swallow the pool. Uses a synthetic hash
+    // because pool creation is off-chain and has no tx.
+    pushClientEvent({
+      type: 'pool-created',
+      poolId: r.poolId,
+      teamId,
+      teamName: (TEAMS.find(t => t.id === teamId) || {}).name,
+      purpose,
+      policy,
+      hash: 'local:pool:' + r.poolId,
+    })
     toast({ level: 'ok', title: 'Pool opened', desc: purpose })
     await Promise.all([refreshPools(), refreshJournal()])
   } catch (e) {
@@ -726,14 +765,32 @@ async function submitPool () {
 async function refreshPools () {
   try {
     const [{ pools }, pending] = await Promise.all([api('/api/pools'), pendingLocalEvents()])
-    // Merge any local pool contributions the server has not caught up on.
     const localContribs = pending.filter(e => e.type === 'pool-contribution')
+    const localCreated = pending.filter(e => e.type === 'pool-created')
+    // Fold pending contributions into the matching server pools first.
     for (const p of pools) {
       const forPool = localContribs.filter(c => c.poolId === p.poolId)
       for (const c of forPool) {
         p.totalUsdt = Number(p.totalUsdt || 0) + Number(c.amount || 0)
         p.contributors = (p.contributors || 0) + 1
       }
+    }
+    // Then synthesize pool cards for locally-created pools the server has
+    // not yet reflected, seeding their totals from the local contributions.
+    const existingIds = new Set(pools.map(p => p.poolId))
+    for (const c of localCreated) {
+      if (existingIds.has(c.poolId)) continue
+      const seed = localContribs.filter(x => x.poolId === c.poolId)
+      pools.push({
+        poolId: c.poolId,
+        teamId: c.teamId,
+        teamName: c.teamName,
+        purpose: c.purpose,
+        policy: c.policy,
+        totalUsdt: seed.reduce((s, x) => s + Number(x.amount || 0), 0),
+        contributors: seed.length,
+        settled: false,
+      })
     }
     const root = $('#pools-list')
     if (!pools.length) { root.innerHTML = ''; return }
@@ -1015,16 +1072,22 @@ async function refreshJournal () {
     const merged = [...entries, ...pending].sort((a, b) => (b.ts || 0) - (a.ts || 0))
     const root = $('#journal')
     if (!merged.length) { root.innerHTML = ''; return }
-    root.innerHTML = merged.slice(0, 60).map(e => `
-      <div class="journal-row">
-        <span class="journal-ts">${timeAgo(e.ts)}</span>
-        <span class="journal-type">${e.type}</span>
-        <span class="journal-desc">${describeEvent(e)}</span>
-        ${e.hash
-          ? `<a class="journal-hash" href="${CONFIG?.explorer}/tx/${e.hash}" target="_blank" rel="noopener">${shortHash(e.hash)} ↗</a>`
-          : '<span class="journal-hash">off-chain</span>'}
-      </div>
-    `).join('')
+    root.innerHTML = merged.slice(0, 60).map(e => {
+      // Local-only markers (pool creation, other off-chain events cached
+      // client-side) carry a synthetic hash like "local:pool:pool_xxx".
+      // Do not render those as Etherscan links because there is no tx.
+      const isRealTx = e.hash && !String(e.hash).startsWith('local:')
+      return `
+        <div class="journal-row">
+          <span class="journal-ts">${timeAgo(e.ts)}</span>
+          <span class="journal-type">${e.type}</span>
+          <span class="journal-desc">${describeEvent(e)}</span>
+          ${isRealTx
+            ? `<a class="journal-hash" href="${CONFIG?.explorer}/tx/${e.hash}" target="_blank" rel="noopener">${shortHash(e.hash)} ↗</a>`
+            : '<span class="journal-hash">off-chain</span>'}
+        </div>
+      `
+    }).join('')
   } catch (e) {
     $('#journal').innerHTML = `<div class="hint err">journal error: ${e.message}</div>`
   }
@@ -1161,7 +1224,10 @@ async function boot () {
     el.classList.add('online')
   })
   await Promise.allSettled([refreshStats(), refreshMarkets(), refreshPools(), refreshJournal()])
-  showConnectView()  // no wallet connected on boot
+  showConnectView()
+  // Silently rehydrate the wallet if this browser was previously connected.
+  // Fires after render so a slow MetaMask does not delay the initial paint.
+  tryAutoReconnect().catch(() => {})
   setInterval(() => { if (CONNECTED) refreshConnectedBalances() }, 30_000)
   setInterval(refreshMarkets, 20_000)
 }
