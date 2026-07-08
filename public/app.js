@@ -2,13 +2,13 @@
 ///
 /// Vanilla JS, no framework. Two wallet modes are supported:
 ///
-///   1. External wallet (recommended) — user connects MetaMask / Rabby /
+///   1. External wallet (recommended). User connects MetaMask / Rabby /
 ///      Coinbase / any EIP-1193 provider. Every tx (USDt transfer for
 ///      tips, pool contributions, bets) is signed client-side via ethers
 ///      and the server only receives the tx hash to append to the audit
 ///      journal. FanBank never touches the user's seed.
 ///
-///   2. Demo mode — the server signs with a shared WDK wallet. Handy for
+///   2. Demo mode. The server signs with a shared WDK wallet. Handy for
 ///      judges without MetaMask; every tx is still on chain but the same
 ///      wallet is fan + escrow. Clearly labeled in the modal.
 
@@ -31,7 +31,7 @@ const FLAG_CDN = code => `https://flagcdn.com/w40/${code}.png`
 
 const fmtUsdt = n => `${Number(n || 0).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDt`
 const fmtGas = n => `${Number(n || 0).toFixed(4)} ETH`
-const shortAddr = a => a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '—'
+const shortAddr = a => a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '·'
 const shortHash = h => h ? `${h.slice(0, 8)}…${h.slice(-6)}` : ''
 const timeAgo = ts => {
   const s = Math.floor((Date.now() - ts) / 1000)
@@ -133,7 +133,7 @@ function handleAccountsChanged (accounts) {
   if (!accounts?.length) {
     disconnect()
   } else if (accounts[0].toLowerCase() !== CONNECTED?.address?.toLowerCase()) {
-    // Account switched — reload the connection
+    // Account switched. Reload the connection.
     connectInjected().catch(err => toast({ level: 'err', title: 'Reconnect failed', desc: err.message }))
   }
 }
@@ -540,7 +540,7 @@ function marketRow (m) {
 
 function oddCell (m, outcome, team, isOpen, labelOverride) {
   const odd = m.odds[outcome]
-  const oddStr = odd ? `×${odd.toFixed(2)}` : '×—'
+  const oddStr = odd ? `×${odd.toFixed(2)}` : '×…'
   const label = labelOverride || team?.name || outcome
   const flag = team?.iso ? `<img src="${FLAG_CDN(team.iso)}" alt="" />` : ''
   return `
@@ -698,7 +698,7 @@ $$('.wallet-option[data-connect="demo"]').forEach(el => el.addEventListener('cli
 }))
 
 // Boot sequence. Wrapped so that a single failed endpoint does not brick
-// the whole page — every step is retried a few times with backoff, and
+// the whole page. Every step is retried a few times with backoff, and
 // visible errors go into a "server offline" banner rather than a scary
 // alert(). Local dev servers often take a couple of seconds after nodemon
 // restarts before /api/config responds.
@@ -717,9 +717,20 @@ async function boot () {
     await bootWithRetry(loadTeams, 'loadTeams')
     await bootWithRetry(loadMatches, 'loadMatches')
   } catch (e) {
+    // Server offline: dim the operator status pills so judges can see it
+    document.querySelectorAll('#operator-status, #operator-status-footer').forEach(el => {
+      el.classList.remove('badge-live')
+      el.classList.add('badge-offline')
+      const label = el.querySelector('span:last-child')
+      if (label) label.textContent = 'Operator offline'
+    })
     toast({ level: 'err', title: 'Server offline', desc: 'Cannot reach the FanBank API. Start the local server (npm run dev) and refresh.' })
     return
   }
+  // Config loaded successfully. Confirm the operator is live in the UI.
+  document.querySelectorAll('#operator-status, #operator-status-footer').forEach(el => {
+    el.classList.add('online')
+  })
   await Promise.allSettled([refreshStats(), refreshMarkets(), refreshPools(), refreshJournal()])
   showConnectView()  // no wallet connected on boot
   setInterval(() => { if (CONNECTED) refreshConnectedBalances() }, 30_000)
