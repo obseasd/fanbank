@@ -7,7 +7,9 @@
       "config": {
         "includeFiles": [
           "public/**",
-          "src/**"
+          "src/**",
+          "node_modules/sodium-native/prebuilds/linux-x64/**",
+          "node_modules/bare-*/prebuilds/linux-x64/**"
         ]
       }
     }
