@@ -26,7 +26,7 @@ const ERC20_ABI = [
 export class FanWallet {
   constructor (config = {}) {
     this.seed = config.seed || process.env.WDK_SEED
-    this.rpcUrl = config.rpcUrl || process.env.RPC_URL || 'https://rpc.sepolia.org'
+    this.rpcUrl = config.rpcUrl || process.env.RPC_URL || 'https://sepolia.base.org'
     this.accountIndex = config.accountIndex ?? 0
     this.usdtAddress = (config.usdtAddress || process.env.USDT_ADDRESS || '').toLowerCase()
     this.usdtDecimals = Number(config.usdtDecimals ?? process.env.USDT_DECIMALS ?? 6)

@@ -40,7 +40,7 @@ function compile () {
 
 async function main () {
   const seed = process.env.WDK_SEED
-  const rpc = process.env.RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'
+  const rpc = process.env.RPC_URL || 'https://sepolia.base.org'
   if (!seed) throw new Error('WDK_SEED missing. Populate .env before deploying.')
 
   const provider = new ethers.JsonRpcProvider(rpc)

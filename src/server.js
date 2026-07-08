@@ -108,11 +108,22 @@ app.get('/api/health', (_req, res) => {
 /// chain id, and the operator's tip / escrow addresses are all public
 /// data, safe to serve.
 app.get('/api/config', (_req, res) => {
+  const chainId = Number(process.env.CHAIN_ID || 84532)
+  // Derive display name + block explorer from the chain id so a single
+  // env-var flip switches every downstream link. Fall back to Base
+  // Sepolia which is the default the app now ships against.
+  const CHAIN_NAMES = { 1: 'Ethereum', 11155111: 'Sepolia', 8453: 'Base', 84532: 'Base Sepolia' }
+  const EXPLORERS = {
+    1: 'https://etherscan.io',
+    11155111: 'https://sepolia.etherscan.io',
+    8453: 'https://basescan.org',
+    84532: 'https://sepolia.basescan.org',
+  }
   res.json({
-    chainId: Number(process.env.CHAIN_ID || 11155111),
-    chainName: 'Sepolia',
+    chainId,
+    chainName: process.env.CHAIN_NAME || CHAIN_NAMES[chainId] || 'Unknown',
     rpcHttp: wallet?.rpcUrl ?? process.env.RPC_URL ?? null,
-    explorer: 'https://sepolia.etherscan.io',
+    explorer: process.env.EXPLORER_URL || EXPLORERS[chainId] || 'https://sepolia.basescan.org',
     usdt: {
       address: wallet?.usdtAddress ?? null,
       decimals: wallet?.usdtDecimals ?? 6,

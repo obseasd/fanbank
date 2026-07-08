@@ -127,7 +127,7 @@ function toast ({ level = 'ok', title, desc, txHash, timeout = 5500 } = {}) {
   el.className = `toast ${level}`
   const icon = level === 'ok' ? '✓' : '!'
   const link = txHash
-    ? ` · <a href="${CONFIG?.explorer || 'https://sepolia.etherscan.io'}/tx/${txHash}" target="_blank" rel="noopener">${shortHash(txHash)}</a>`
+    ? ` · <a href="${CONFIG?.explorer || 'https://sepolia.basescan.org'}/tx/${txHash}" target="_blank" rel="noopener">${shortHash(txHash)}</a>`
     : ''
   el.innerHTML = `
     <div class="toast-icon">${icon}</div>
@@ -170,14 +170,16 @@ async function connectInjected () {
     try {
       await provider.send('wallet_switchEthereumChain', [{ chainId: '0x' + CONFIG.chainId.toString(16) }])
     } catch (e) {
-      // If chain not added yet, add it. Sepolia is well-known but some
-      // wallets do not have it by default.
+      // If the chain has never been added on this wallet, add it. The
+      // display metadata (name, native currency symbol) comes from the
+      // server config so a single env-var flip on Vercel changes the
+      // network everywhere at once, no client redeploy required.
       if (e.code === 4902 || String(e.message || '').match(/unrecognized chain/i)) {
         await provider.send('wallet_addEthereumChain', [{
           chainId: '0x' + CONFIG.chainId.toString(16),
-          chainName: 'Sepolia',
-          nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 },
-          rpcUrls: [CONFIG.rpcHttp || 'https://ethereum-sepolia-rpc.publicnode.com'],
+          chainName: CONFIG.chainName || 'Sepolia',
+          nativeCurrency: { name: (CONFIG.chainName || 'Sepolia') + ' ETH', symbol: 'ETH', decimals: 18 },
+          rpcUrls: [CONFIG.rpcHttp || 'https://sepolia.base.org'],
           blockExplorerUrls: [CONFIG.explorer],
         }])
       } else {
@@ -1286,6 +1288,11 @@ async function loadMatches () {
 
 async function loadConfig () {
   CONFIG = await api('/api/config')
+  // Point the "verify on the block explorer" link in the audit note at
+  // whatever chain the server is configured for. Keeps the copy honest
+  // if the operator flips CHAIN_ID on Vercel.
+  const link = $('#explorer-link')
+  if (link && CONFIG.explorer) link.href = CONFIG.explorer
 }
 
 // Wire buttons
