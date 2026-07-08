@@ -171,7 +171,7 @@ section, header, footer, main { position: relative; z-index: 1; }
 .brand-mark-img {
   background: transparent;
   padding: 0;
-  box-shadow: 0 4px 24px rgba(47, 186, 139, 0.28);
+  box-shadow: none;
   border-radius: 0;
 }
 .brand-mark-img img {
@@ -179,7 +179,6 @@ section, header, footer, main { position: relative; z-index: 1; }
   height: 100%;
   object-fit: contain;
   display: block;
-  filter: drop-shadow(0 2px 8px rgba(47, 186, 139, 0.35));
 }
 .brand-text {
   display: flex;

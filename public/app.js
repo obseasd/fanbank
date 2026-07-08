@@ -839,13 +839,21 @@ async function refreshMarkets () {
     // journal is on a different Lambda instance and has not caught up.
     const pendingBets = pending.filter(e => e.type === 'bet-placed')
     for (const m of markets) {
+      // Defensive: server should always send these but if a payload is
+      // missing them we hydrate a zeroed shape so the fold does not throw.
+      m.stakeByOutcome = m.stakeByOutcome || { home: 0, away: 0, draw: 0 }
+      m.odds = m.odds || { home: null, away: null, draw: null }
+      m.totalStakeUsdt = Number(m.totalStakeUsdt || 0)
       const local = pendingBets.filter(b => b.matchId === m.matchId)
-      if (!local.length) continue
       for (const b of local) {
-        m.totalStakeUsdt = Number(m.totalStakeUsdt || 0) + Number(b.amount)
-        m.stakeByOutcome[b.outcome] = Number(m.stakeByOutcome[b.outcome] || 0) + Number(b.amount)
+        const amt = Number(b.amount || 0)
+        if (!amt) continue
+        m.totalStakeUsdt += amt
+        m.stakeByOutcome[b.outcome] = Number(m.stakeByOutcome[b.outcome] || 0) + amt
         m.betsCount = (m.betsCount || 0) + 1
       }
+      // Always recompute odds from the (possibly augmented) stake map so
+      // the display stays consistent whether local bets applied or not.
       for (const k of ['home', 'away', 'draw']) {
         const st = Number(m.stakeByOutcome[k] || 0)
         m.odds[k] = st > 0 ? m.totalStakeUsdt / st : null
@@ -948,7 +956,9 @@ async function placeBet (matchId, outcome) {
     pushClientEvent({
       type: 'bet-placed',
       matchId,
-      matchLabel,
+      // Store matchLabel using team IDs the same way the server does,
+      // so the audit journal renders proper flags via matchLabelWithFlags.
+      matchLabel: `${match.home} vs ${match.away}`,
       matchStage: match.stage,
       outcome,
       amount,
