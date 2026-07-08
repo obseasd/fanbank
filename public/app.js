@@ -1328,6 +1328,40 @@ $('#pool-create-btn').addEventListener('click', submitPool)
 
 $('#modal-copy').addEventListener('click', () => CONNECTED && copyToClipboard(CONNECTED.address, 'Address copied'))
 $('#modal-disconnect').addEventListener('click', () => { disconnect(); closeWalletModal() })
+
+// Testnet-only faucet button on the connected wallet view. The demo
+// MockUSDT contract has an unrestricted mint(), so any connected wallet
+// can top itself up with 10 000 USDt in one signed tx. Removes the
+// "your MetaMask has 0 USDt" onboarding cliff for judges and users.
+$('#modal-mint')?.addEventListener('click', async () => {
+  if (!CONNECTED || CONNECTED.mode !== 'external') {
+    return toast({ level: 'err', title: 'Connect an external wallet first' })
+  }
+  if (!CONFIG?.usdt?.address) {
+    return toast({ level: 'err', title: 'USDt contract not configured' })
+  }
+  const btn = $('#modal-mint')
+  btn.disabled = true
+  const originalLabel = btn.textContent
+  btn.textContent = 'Waiting for signature…'
+  try {
+    const MINT_ABI = ['function mint(address to, uint256 amount) external']
+    const contract = new ethers.Contract(CONFIG.usdt.address, MINT_ABI, CONNECTED.signer)
+    const amount = ethers.parseUnits('10000', CONFIG.usdt.decimals)
+    btn.textContent = 'Sign in your wallet…'
+    const tx = await contract.mint(CONNECTED.address, amount)
+    btn.textContent = 'Confirming…'
+    const receipt = await tx.wait()
+    if (receipt.status !== 1) throw new Error('Mint reverted on chain')
+    toast({ level: 'ok', title: 'Minted 10,000 USDt', txHash: tx.hash })
+    await refreshConnectedBalances()
+  } catch (e) {
+    toast({ level: 'err', title: 'Mint failed', desc: e?.shortMessage || e?.message || 'Unknown error' })
+  } finally {
+    btn.disabled = false
+    btn.textContent = originalLabel
+  }
+})
 $$('.wallet-option[data-connect="injected"]').forEach(el => el.addEventListener('click', async () => {
   try { await connectInjected(); toast({ level: 'ok', title: 'Wallet connected', desc: shortAddr(CONNECTED.address) }) }
   catch (e) { toast({ level: 'err', title: 'Connection failed', desc: e.message }) }
