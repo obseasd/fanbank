@@ -46,6 +46,15 @@ async function save () {
   await fs.writeFile(JOURNAL_PATH, JSON.stringify(cache, null, 2))
 }
 
+/// Demo-only: wipe the entire journal. Called from a dev endpoint so
+/// the user can reset the odds board between recordings. The audit
+/// trail is still verifiable on Etherscan; this only clears the local
+/// cache used to render the UI.
+export async function reset () {
+  cache = []
+  await save()
+}
+
 /// Append an event and persist. Events are JSON objects with at minimum
 /// `type` and `ts`; specific event shapes live in tipping.js, pool.js,
 /// prediction.js and are documented next to their record() calls.

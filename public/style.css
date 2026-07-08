@@ -1564,6 +1564,26 @@ footer {
 .audit-note strong { color: var(--fg-muted); font-weight: 500; }
 .audit-note a { color: var(--tether-strong); }
 .audit-note a:hover { text-decoration: underline; }
+.audit-note .reset-demo-btn {
+  margin-left: 10px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.audit-note .reset-demo-btn:hover {
+  color: var(--tether-strong);
+  border-color: var(--tether-strong);
+  background: rgba(47, 186, 139, 0.06);
+}
+.audit-note .reset-demo-btn:focus-visible {
+  outline: 2px solid var(--tether-strong);
+  outline-offset: 2px;
+}
 
 /* ─── Toasts ─── */
 .toast-host {

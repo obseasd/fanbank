@@ -1292,6 +1292,21 @@ async function loadConfig () {
 $('#wallet-pill').addEventListener('click', openWalletModal)
 $('#wallet-chip')?.addEventListener('click', openWalletModal)
 $('#hero-connect').addEventListener('click', openWalletModal)
+
+$('#reset-demo')?.addEventListener('click', async () => {
+  // Clear both sides of the state: local optimistic cache AND the
+  // server journal + settled-match overrides. On-chain USDt transfers
+  // are still there on Sepolia; only the display is reset.
+  try {
+    localStorage.removeItem(CLIENT_JOURNAL_KEY)
+    localStorage.removeItem(HIDDEN_POOLS_KEY)
+    await api('/api/dev/reset', { method: 'POST' })
+    toast({ level: 'ok', title: 'Odds board reset', desc: 'Local cache + server journal cleared. On-chain txs remain permanent.' })
+    await Promise.all([refreshStats(), refreshMarkets(), refreshPools(), refreshJournal()])
+  } catch (e) {
+    toast({ level: 'err', title: 'Reset failed', desc: e.message })
+  }
+})
 $$('#wallet-modal [data-close]').forEach(el => el.addEventListener('click', closeWalletModal))
 // Escape: the generic modal handles its own key (via stopPropagation).
 // This fallback closes the wallet modal only when no generic modal is up.

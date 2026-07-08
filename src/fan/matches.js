@@ -78,6 +78,12 @@ const SCHEDULE = [
 // without restarting the server.
 const RESULT_OVERRIDES = new Map()
 
+/// Demo-only: undo every settle so the board goes back to its stock
+/// schedule. Called from the same reset endpoint that clears the journal.
+export function resetOverrides () {
+  RESULT_OVERRIDES.clear()
+}
+
 export function listMatches () {
   return SCHEDULE.map(m => {
     const override = RESULT_OVERRIDES.get(m.id)

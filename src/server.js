@@ -24,7 +24,8 @@ import { assertSchedule, listMatches, settleMatch, getMatch } from './fan/matche
 import { tipTeam, tipPlayer } from './fan/tipping.js'
 import { createPool, contribute, computeSplit, payout, listPools } from './fan/pool.js'
 import { placeBet, marketState, settleMarket, snapshotAllMarkets } from './fan/prediction.js'
-import { list as journalList, stats as journalStats } from './fan/journal.js'
+import { list as journalList, stats as journalStats, reset as journalReset } from './fan/journal.js'
+import { resetOverrides as resetMatchOverrides } from './fan/matches.js'
 import { recordExternalTip, recordExternalContribution, recordExternalBet } from './fan/external.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -287,6 +288,19 @@ app.post('/api/bet/external', txLimit, async (req, res) => {
     const { matchId, outcome, amount, txHash, from, to } = req.body ?? {}
     res.json(await recordExternalBet({ matchId, outcome, amount, txHash, from, to }))
   } catch (e) { res.status(400).json({ error: e.message }) }
+})
+
+/// Demo-only reset: wipe the off-chain journal and clear any settled
+/// match overrides so the odds board goes back to its stock state. The
+/// on-chain USDt transfers are untouched, they remain permanent tx that
+/// judges can still verify on Etherscan. Kept unauthenticated because
+/// the demo is public and there is nothing sensitive to protect.
+app.post('/api/dev/reset', async (_req, res) => {
+  try {
+    await journalReset()
+    resetMatchOverrides()
+    res.json({ ok: true, cleared: ['journal', 'match-overrides'] })
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
 // Local dev entry: node src/server.js. On Vercel we import { app } from
