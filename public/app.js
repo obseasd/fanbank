@@ -63,6 +63,42 @@ async function api (path, opts = {}) {
   return data
 }
 
+/* ─── Local optimistic journal ───
+ *
+ * Vercel serverless writes the audit journal to /tmp, which is per Lambda
+ * instance and resets on cold start. Between /api/bet/external and the
+ * next /api/markets read, requests can land on different instances and
+ * the write is invisible to the read. To make the demo trustworthy, every
+ * successful state change is mirrored into localStorage; refresh helpers
+ * merge that local cache into the server response, deduping by tx hash so
+ * a bet is never double-counted once the server picks it up.
+ */
+const CLIENT_JOURNAL_KEY = 'fanbank-client-journal-v1'
+
+function loadClientEvents () {
+  try {
+    const arr = JSON.parse(localStorage.getItem(CLIENT_JOURNAL_KEY) || '[]')
+    return Array.isArray(arr) ? arr : []
+  } catch { return [] }
+}
+
+function pushClientEvent (event) {
+  if (!event?.hash) return  // only track events with a real tx hash
+  const arr = loadClientEvents()
+  arr.push({ ts: Date.now(), status: 'success', source: 'local-optimistic', ...event })
+  try { localStorage.setItem(CLIENT_JOURNAL_KEY, JSON.stringify(arr)) } catch { /* quota full */ }
+}
+
+async function pendingLocalEvents () {
+  try {
+    const { entries } = await api('/api/journal')
+    const seen = new Set((entries || []).map(e => e.hash).filter(Boolean))
+    return loadClientEvents().filter(e => e.hash && !seen.has(e.hash))
+  } catch {
+    return loadClientEvents()
+  }
+}
+
 /* ─── Toasts ─── */
 function toast ({ level = 'ok', title, desc, txHash, timeout = 5500 } = {}) {
   const host = $('#toasts')
@@ -502,11 +538,22 @@ async function transferUsdt (to, amount) {
 /* ─── Stats strip ─── */
 async function refreshStats () {
   try {
-    const s = await api('/api/stats')
-    $('#stat-tips').textContent = String(s.tipCount)
-    $('#stat-tip-vol').textContent = fmtUsdt(s.tipVolumeUsdt)
-    $('#stat-bets').textContent = String(s.betCount)
-    $('#stat-bet-vol').textContent = fmtUsdt(s.betVolumeUsdt)
+    const [s, pending] = await Promise.all([api('/api/stats'), pendingLocalEvents()])
+    // Fold any locally-optimistic events the server has not yet
+    // reflected. Same reasoning as refreshMarkets: /tmp is per Lambda
+    // and can drift from the write instance.
+    let tipCount = s.tipCount || 0
+    let tipVol = s.tipVolumeUsdt || 0
+    let betCount = s.betCount || 0
+    let betVol = s.betVolumeUsdt || 0
+    for (const e of pending) {
+      if (e.type === 'tip') { tipCount++; tipVol += Number(e.amount || 0) }
+      else if (e.type === 'bet-placed') { betCount++; betVol += Number(e.amount || 0) }
+    }
+    $('#stat-tips').textContent = String(tipCount)
+    $('#stat-tip-vol').textContent = fmtUsdt(tipVol)
+    $('#stat-bets').textContent = String(betCount)
+    $('#stat-bet-vol').textContent = fmtUsdt(betVol)
   } catch { /* keep previous */ }
 }
 
@@ -636,6 +683,16 @@ async function submitTip () {
       const r = await api('/api/tip/team', { method: 'POST', body: { teamId, amount } })
       receipt = r.receipt
     }
+    pushClientEvent({
+      type: 'tip',
+      target: 'team',
+      teamId: team.id,
+      teamName: team.name,
+      amount,
+      from: receipt.from,
+      to: team.tipAddress,
+      hash: receipt.hash,
+    })
     hint.className = 'hint ok'
     hint.textContent = `Tipped ${fmtUsdt(amount)} to ${team.name}. Tx ${shortHash(receipt.hash)}.`
     toast({ level: 'ok', title: `Tipped ${fmtUsdt(amount)} to ${team.name}`, txHash: receipt.hash })
@@ -668,7 +725,16 @@ async function submitPool () {
 
 async function refreshPools () {
   try {
-    const { pools } = await api('/api/pools')
+    const [{ pools }, pending] = await Promise.all([api('/api/pools'), pendingLocalEvents()])
+    // Merge any local pool contributions the server has not caught up on.
+    const localContribs = pending.filter(e => e.type === 'pool-contribution')
+    for (const p of pools) {
+      const forPool = localContribs.filter(c => c.poolId === p.poolId)
+      for (const c of forPool) {
+        p.totalUsdt = Number(p.totalUsdt || 0) + Number(c.amount || 0)
+        p.contributors = (p.contributors || 0) + 1
+      }
+    }
     const root = $('#pools-list')
     if (!pools.length) { root.innerHTML = ''; return }
     root.innerHTML = pools.map(p => {
@@ -699,7 +765,7 @@ async function contributeToPool (poolId) {
     title: 'Contribute to pool',
     description: 'Signs a USDt transfer from your wallet into the pool escrow.',
     fields: [
-      { name: 'amount', label: 'Amount', type: 'number', placeholder: '1.00', min: 0.01, step: 0.01, suffix: 'USDt', defaultValue: 1 },
+      { name: 'amount', label: 'Amount', type: 'number', placeholder: '1.00', min: 0.01, step: 0.01, suffix: 'USDt' },
     ],
     submit: 'Send contribution',
   })
@@ -717,6 +783,14 @@ async function contributeToPool (poolId) {
       const r = await api(`/api/pool/${poolId}/contribute`, { method: 'POST', body: { amount } })
       receipt = r.receipt
     }
+    pushClientEvent({
+      type: 'pool-contribution',
+      poolId,
+      amount,
+      from: receipt.from,
+      to: CONFIG.escrow,
+      hash: receipt.hash,
+    })
     toast({ level: 'ok', title: `Contributed ${fmtUsdt(amount)}`, txHash: receipt.hash })
     await Promise.all([refreshConnectedBalances(), refreshStats(), refreshPools(), refreshJournal()])
   } catch (e) {
@@ -756,7 +830,27 @@ async function payoutPool (poolId) {
 /* ─── Markets ─── */
 async function refreshMarkets () {
   try {
-    const { markets } = await api('/api/markets')
+    const [{ markets }, pending] = await Promise.all([
+      api('/api/markets'),
+      pendingLocalEvents(),
+    ])
+    // Fold any unconfirmed local bets into the server totals so a stake
+    // shows up immediately after the tx confirms, even if the server
+    // journal is on a different Lambda instance and has not caught up.
+    const pendingBets = pending.filter(e => e.type === 'bet-placed')
+    for (const m of markets) {
+      const local = pendingBets.filter(b => b.matchId === m.matchId)
+      if (!local.length) continue
+      for (const b of local) {
+        m.totalStakeUsdt = Number(m.totalStakeUsdt || 0) + Number(b.amount)
+        m.stakeByOutcome[b.outcome] = Number(m.stakeByOutcome[b.outcome] || 0) + Number(b.amount)
+        m.betsCount = (m.betsCount || 0) + 1
+      }
+      for (const k of ['home', 'away', 'draw']) {
+        const st = Number(m.stakeByOutcome[k] || 0)
+        m.odds[k] = st > 0 ? m.totalStakeUsdt / st : null
+      }
+    }
     const root = $('#markets-list')
     if (!markets.length) { root.innerHTML = '<div class="hint">No markets yet.</div>'; return }
     root.innerHTML = markets.map(m => marketRow(m)).join('')
@@ -833,7 +927,7 @@ async function placeBet (matchId, outcome) {
     title: `Bet on ${outcomeLabel}`,
     description: `${matchLabel}. Signs a USDt transfer from your wallet into the market escrow.`,
     fields: [
-      { name: 'amount', label: 'Stake', type: 'number', placeholder: '1.00', min: 0.01, step: 0.01, suffix: 'USDt', defaultValue: 1 },
+      { name: 'amount', label: 'Stake', type: 'number', placeholder: '1.00', min: 0.01, step: 0.01, suffix: 'USDt' },
     ],
     submit: 'Place bet',
   })
@@ -851,6 +945,17 @@ async function placeBet (matchId, outcome) {
       const r = await api('/api/bet', { method: 'POST', body: { matchId, outcome, amount } })
       receipt = r.receipt
     }
+    pushClientEvent({
+      type: 'bet-placed',
+      matchId,
+      matchLabel,
+      matchStage: match.stage,
+      outcome,
+      amount,
+      from: receipt.from,
+      to: CONFIG.escrow,
+      hash: receipt.hash,
+    })
     toast({ level: 'ok', title: `Bet placed: ${fmtUsdt(amount)} on ${outcomeLabel}`, txHash: receipt.hash })
     await Promise.all([refreshConnectedBalances(), refreshStats(), refreshMarkets(), refreshJournal()])
   } catch (e) {
@@ -893,9 +998,14 @@ async function settleDemoDialog (matchId) {
 async function refreshJournal () {
   try {
     const { entries } = await api('/api/journal')
+    // Fold local optimistic events the server has not yet reflected so
+    // the audit table stays in sync with what the user just did.
+    const seen = new Set((entries || []).map(e => e.hash).filter(Boolean))
+    const pending = loadClientEvents().filter(e => e.hash && !seen.has(e.hash))
+    const merged = [...entries, ...pending].sort((a, b) => (b.ts || 0) - (a.ts || 0))
     const root = $('#journal')
-    if (!entries.length) { root.innerHTML = ''; return }
-    root.innerHTML = entries.slice(0, 60).map(e => `
+    if (!merged.length) { root.innerHTML = ''; return }
+    root.innerHTML = merged.slice(0, 60).map(e => `
       <div class="journal-row">
         <span class="journal-ts">${timeAgo(e.ts)}</span>
         <span class="journal-type">${e.type}</span>
