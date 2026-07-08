@@ -836,6 +836,12 @@ async function refreshPools () {
       seen.add(key)
       merged.push(e)
     }
+    // The server returns entries newest-first and the local cache is
+    // append-order, so a naive iteration can process a pool-contribution
+    // before its parent pool-created and drop the total on the floor.
+    // Sort ascending by ts so causality is respected: pool created,
+    // then contributed to, then settled.
+    merged.sort((a, b) => (a.ts || 0) - (b.ts || 0))
     const poolsMap = new Map()
     for (const e of merged) {
       if (e.type === 'pool-created') {
