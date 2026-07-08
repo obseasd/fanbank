@@ -29,6 +29,13 @@ import { recordExternalTip, recordExternalContribution, recordExternalBet } from
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
+
+// Behind Vercel's proxy every request carries an X-Forwarded-For header.
+// express-rate-limit v8 refuses to run without an explicit trust-proxy
+// setting and throws a fatal error, which surfaces on Vercel as a raw
+// FUNCTION_INVOCATION_FAILED. One hop is enough on Vercel.
+app.set('trust proxy', 1)
+
 app.use(express.json({ limit: '64kb' }))
 app.use('/public', express.static(path.resolve(__dirname, '..', 'public')))
 app.use('/', express.static(path.resolve(__dirname, '..', 'public')))
@@ -36,7 +43,13 @@ app.use('/', express.static(path.resolve(__dirname, '..', 'public')))
 // Rate limit anything that costs a tx. Fan-economy demo runs on testnet
 // so we're not scared of casual traffic, but a script that hammers
 // /tip/team a thousand times would drain the operator gas balance.
-const txLimit = rateLimit({ windowMs: 60_000, max: 20 })
+const txLimit = rateLimit({
+  windowMs: 60_000,
+  max: 20,
+  // Vercel proxies do not always send the standard header; disable the
+  // strict validation so the middleware never throws mid-request.
+  validate: { xForwardedForHeader: false, trustProxy: false },
+})
 
 let wallet = null
 let bootPromise = null
@@ -60,7 +73,10 @@ function ensureWalletReady () {
   return bootPromise
 }
 
-app.use(async (_req, _res, next) => {
+// Only API routes need the wallet ready. Blocking every request (including
+// static file serves) on WDK boot would exceed Vercel's 10s cold-start
+// timeout on Hobby plan and surface as FUNCTION_INVOCATION_FAILED.
+app.use('/api', async (_req, _res, next) => {
   await ensureWalletReady()
   next()
 })
