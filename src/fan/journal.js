@@ -15,10 +15,18 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = path.resolve(__dirname, '..', '..', 'data')
+
+/// Journal location. Vercel serverless has a read-only filesystem
+/// EXCEPT /tmp, so we write there when detected. In local dev the file
+/// lives under data/journal.json alongside the code.
+const DATA_DIR = process.env.VERCEL === '1'
+  ? '/tmp/fanbank'
+  : path.resolve(__dirname, '..', '..', 'data')
 const JOURNAL_PATH = path.join(DATA_DIR, 'journal.json')
 
-if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
+try {
+  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
+} catch { /* ignore, save() will surface the error on first write */ }
 
 let cache = null
 

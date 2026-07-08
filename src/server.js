@@ -39,12 +39,31 @@ app.use('/', express.static(path.resolve(__dirname, '..', 'public')))
 const txLimit = rateLimit({ windowMs: 60_000, max: 20 })
 
 let wallet = null
+let bootPromise = null
 
 async function bootWallet () {
   assertSchedule()
   wallet = await createFanWallet()
   console.log(`[fanbank] wallet ready ${wallet.address}`)
 }
+
+/// Lazily boot the WDK wallet on the first request. Cheap once resolved
+/// because the promise is cached. Called from local dev startup AND
+/// from every request via a top-level middleware, so Vercel cold starts
+/// do not leak a "wallet not initialized" 503 to the first visitor.
+function ensureWalletReady () {
+  if (!bootPromise) {
+    bootPromise = bootWallet().catch(err => {
+      console.error('[fanbank] wallet boot failed:', err.message)
+    })
+  }
+  return bootPromise
+}
+
+app.use(async (_req, _res, next) => {
+  await ensureWalletReady()
+  next()
+})
 
 /// Every endpoint that needs the wallet checks it here so a boot failure
 /// surfaces as a clean 503 instead of an unhandled TypeError.
@@ -254,15 +273,15 @@ app.post('/api/bet/external', txLimit, async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }) }
 })
 
-const port = Number(process.env.PORT || 3000)
-bootWallet().then(() => {
-  app.listen(port, () => {
-    console.log(`[fanbank] listening on http://localhost:${port}`)
+// Local dev entry: node src/server.js. On Vercel we import { app } from
+// api/index.js and wrap it into a serverless handler, so we skip listen().
+if (process.env.VERCEL !== '1') {
+  const port = Number(process.env.PORT || 3000)
+  ensureWalletReady().finally(() => {
+    app.listen(port, () => {
+      console.log(`[fanbank] listening on http://localhost:${port}`)
+    })
   })
-}).catch(err => {
-  console.error('[fanbank] wallet boot failed:', err.message)
-  // Still start the server so the dashboard can render the error state
-  app.listen(port, () => {
-    console.log(`[fanbank] listening on http://localhost:${port} (wallet OFFLINE)`)
-  })
-})
+}
+
+export { app, ensureWalletReady }
