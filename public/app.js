@@ -1102,6 +1102,37 @@ async function placeBet (matchId, outcome) {
   }
 }
 
+/// Ensure the server journal has every locally-cached bet before we ask
+/// it to settle a market. Vercel serverless can route /api/bet/external
+/// and the eventual /api/market/:id/settle to different Lambda instances
+/// (each with its own /tmp journal), so the settle can end up seeing zero
+/// bets and pay nobody. Replaying the local cache into the server right
+/// before settle forces the same instance to have the full set.
+async function syncLocalBetsToServer (matchId) {
+  const local = loadClientEvents().filter(e =>
+    e.type === 'bet-placed' && e.matchId === matchId && e.hash
+  )
+  if (!local.length) return
+  let serverHashes = new Set()
+  try {
+    const { entries } = await api('/api/journal')
+    for (const e of entries || []) if (e.hash) serverHashes.add(e.hash)
+  } catch { /* offline: still worth trying the replay */ }
+  const missing = local.filter(e => !serverHashes.has(e.hash))
+  for (const b of missing) {
+    try {
+      await api('/api/bet/external', { method: 'POST', body: {
+        matchId: b.matchId,
+        outcome: b.outcome,
+        amount: b.amount,
+        txHash: b.hash,
+        from: b.from,
+        to: b.to,
+      } })
+    } catch { /* server may reject duplicate; ignore */ }
+  }
+}
+
 async function settleDemoDialog (matchId) {
   const match = MATCHES.find(x => x.id === matchId) || {}
   const home = TEAMS.find(t => t.id === match.home)
@@ -1111,9 +1142,9 @@ async function settleDemoDialog (matchId) {
     description: 'Judges only. Records a fake result and triggers payouts for the winning side.',
     fields: [
       { name: 'outcome', label: 'Result', type: 'select', defaultValue: 'home', options: [
-        { value: 'home', label: `Home wins (${home?.name || match.home || 'home'})` },
+        { value: 'home', label: `${home?.name || match.home || 'home'} wins` },
         { value: 'draw', label: 'Draw' },
-        { value: 'away', label: `Away wins (${away?.name || match.away || 'away'})` },
+        { value: 'away', label: `${away?.name || match.away || 'away'} wins` },
       ] },
       { name: 'score', label: 'Final score', type: 'text', placeholder: '2-1', required: false },
     ],
@@ -1121,6 +1152,9 @@ async function settleDemoDialog (matchId) {
   })
   if (!values) return
   try {
+    // Replay any locally-cached bets to the server first, so the
+    // settle sees a full stake pool instead of a stale slice.
+    await syncLocalBetsToServer(matchId)
     await api(`/api/match/${matchId}/settle-demo`, { method: 'POST', body: {
       outcome: values.outcome,
       score: values.score && values.score.trim() ? values.score.trim() : null,
@@ -1196,12 +1230,32 @@ function describeEvent (e) {
       return `payout <span class="highlight">${fmtUsdt(e.amount)}</span> → ${shortAddr(e.to)}`
     case 'pool-settled':
       return `${e.policy} settle · <span class="highlight">${fmtUsdt(e.totalUsdt)}</span> across ${e.payouts} recipients`
-    case 'bet-placed':
-      return `bet <span class="highlight">${fmtUsdt(e.amount)}</span> on <strong>${e.outcome}</strong> · ${matchLabelWithFlags(e.matchLabel)}`
+    case 'bet-placed': {
+      // Resolve which team the outcome maps to (or Draw) and print it
+      // directly. Repeating "on away · France vs Argentina" reads badly
+      // when the reader has to reconstruct which is home and which is
+      // away. Show the team the user actually backed.
+      const [homeId, awayId] = String(e.matchLabel || '').split(' vs ').map(s => s.trim())
+      let target
+      if (e.outcome === 'draw') target = '<strong>Draw</strong>'
+      else if (e.outcome === 'home') target = teamLabel(homeId)
+      else target = teamLabel(awayId)
+      return `<span class="highlight">${fmtUsdt(e.amount)}</span> on ${target}`
+    }
     case 'bet-payout':
       return `payout <span class="highlight">${fmtUsdt(e.amount)}</span> → ${shortAddr(e.winner)}`
-    case 'market-settled':
-      return `${matchLabelWithFlags(e.matchLabel)} settled <strong>${e.resultOutcome}</strong> ${e.resultScore ?? ''} · ${e.payouts} payouts`
+    case 'market-settled': {
+      // Show the winner as a team lockup, not the raw "home/away/draw"
+      // token, so the audit line reads at a glance.
+      const [homeId, awayId] = String(e.matchLabel || '').split(' vs ').map(s => s.trim())
+      let winner
+      if (e.resultOutcome === 'draw') winner = '<strong>Draw</strong>'
+      else if (e.resultOutcome === 'home') winner = teamLabel(homeId)
+      else winner = teamLabel(awayId)
+      const score = e.resultScore ? ` <span class="mono">${e.resultScore}</span>` : ''
+      const payouts = typeof e.payouts === 'number' ? ` · ${e.payouts} payout${e.payouts === 1 ? '' : 's'}` : ''
+      return `${winner} won${score}${payouts}`
+    }
     default:
       return JSON.stringify(e).slice(0, 100)
   }
