@@ -75,6 +75,17 @@ async function api (path, opts = {}) {
  */
 const CLIENT_JOURNAL_KEY = 'fanbank-client-journal-v1'
 const HIDDEN_POOLS_KEY = 'fanbank-hidden-pools-v1'
+const RESET_AT_KEY = 'fanbank-reset-at-v1'
+
+/// Returns the timestamp of the most recent Reset odds board click. Any
+/// event older than this is filtered out of the merged journal, so if a
+/// stale Lambda instance answers /api/journal with pre-reset data we do
+/// not repaint it back into the UI.
+function loadResetAt () {
+  const raw = localStorage.getItem(RESET_AT_KEY)
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
 
 function loadClientEvents () {
   try {
@@ -598,15 +609,24 @@ async function transferUsdt (to, amount) {
 /* ─── Stats strip ─── */
 async function refreshStats () {
   try {
-    const [s, pending] = await Promise.all([api('/api/stats'), pendingLocalEvents()])
-    // Fold any locally-optimistic events the server has not yet
-    // reflected. Same reasoning as refreshMarkets: /tmp is per Lambda
-    // and can drift from the write instance.
-    let tipCount = s.tipCount || 0
-    let tipVol = s.tipVolumeUsdt || 0
-    let betCount = s.betCount || 0
-    let betVol = s.betVolumeUsdt || 0
-    for (const e of pending) {
+    // Read stats off the merged journal so a reset click that only cleared
+    // one Lambda instance still zeroes the display, and so post-reset
+    // events push the counters back up in real time.
+    const [journal] = await Promise.all([
+      api('/api/journal').then(r => r.entries || []).catch(() => []),
+    ])
+    const resetAt = loadResetAt()
+    const seen = new Set()
+    const merged = []
+    for (const e of [...journal, ...loadClientEvents()]) {
+      if (resetAt && (e.ts || 0) < resetAt) continue
+      const key = e.hash || `${e.type}:${e.matchId || e.poolId || ''}:${e.ts || ''}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push(e)
+    }
+    let tipCount = 0, tipVol = 0, betCount = 0, betVol = 0
+    for (const e of merged) {
       if (e.type === 'tip') { tipCount++; tipVol += Number(e.amount || 0) }
       else if (e.type === 'bet-placed') { betCount++; betVol += Number(e.amount || 0) }
     }
@@ -806,9 +826,11 @@ async function refreshPools () {
       api('/api/journal').then(r => r.entries || []).catch(() => []),
       Promise.resolve(loadClientEvents()),
     ])
+    const resetAt = loadResetAt()
     const seen = new Set()
     const merged = []
     for (const e of [...journal, ...localEvents]) {
+      if (resetAt && (e.ts || 0) < resetAt) continue
       const key = e.hash || `${e.type}:${e.poolId || ''}:${e.ts || ''}`
       if (seen.has(key)) continue
       seen.add(key)
@@ -817,16 +839,21 @@ async function refreshPools () {
     const poolsMap = new Map()
     for (const e of merged) {
       if (e.type === 'pool-created') {
-        poolsMap.set(e.poolId, {
-          poolId: e.poolId,
-          teamId: e.teamId,
-          teamName: e.teamName,
-          purpose: e.purpose,
-          policy: e.policy,
-          totalUsdt: 0,
-          contributors: new Set(),
-          settled: false,
-        })
+        // First pool-created for this poolId wins. A later duplicate
+        // (server + local with different ts) would otherwise overwrite
+        // the pool object and wipe any contributions accumulated so far.
+        if (!poolsMap.has(e.poolId)) {
+          poolsMap.set(e.poolId, {
+            poolId: e.poolId,
+            teamId: e.teamId,
+            teamName: e.teamName,
+            purpose: e.purpose,
+            policy: e.policy,
+            totalUsdt: 0,
+            contributors: new Set(),
+            settled: false,
+          })
+        }
       } else if (e.type === 'pool-contribution' && (e.status || 'success') === 'success') {
         const p = poolsMap.get(e.poolId)
         if (p) {
@@ -954,9 +981,11 @@ async function refreshMarkets () {
       api('/api/journal').then(r => r.entries || []).catch(() => []),
     ])
     const localEvents = loadClientEvents()
+    const resetAt = loadResetAt()
     const seen = new Set()
     const merged = []
     for (const e of [...journal, ...localEvents]) {
+      if (resetAt && (e.ts || 0) < resetAt) continue
       const key = e.hash || `${e.type}:${e.matchId || ''}:${e.ts || ''}`
       if (seen.has(key)) continue
       seen.add(key)
@@ -1179,9 +1208,13 @@ async function refreshJournal () {
     const { entries } = await api('/api/journal')
     // Fold local optimistic events the server has not yet reflected so
     // the audit table stays in sync with what the user just did.
-    const seen = new Set((entries || []).map(e => e.hash).filter(Boolean))
-    const pending = loadClientEvents().filter(e => e.hash && !seen.has(e.hash))
-    const merged = [...entries, ...pending].sort((a, b) => (b.ts || 0) - (a.ts || 0))
+    const resetAt = loadResetAt()
+    const filteredEntries = (entries || []).filter(e => !resetAt || (e.ts || 0) >= resetAt)
+    const seen = new Set(filteredEntries.map(e => e.hash).filter(Boolean))
+    const pending = loadClientEvents().filter(e =>
+      e.hash && !seen.has(e.hash) && (!resetAt || (e.ts || 0) >= resetAt)
+    )
+    const merged = [...filteredEntries, ...pending].sort((a, b) => (b.ts || 0) - (a.ts || 0))
     const root = $('#journal')
     if (!merged.length) { root.innerHTML = ''; return }
     root.innerHTML = merged.slice(0, 60).map(e => {
@@ -1307,8 +1340,15 @@ $('#hero-connect').addEventListener('click', openWalletModal)
 $('#reset-demo')?.addEventListener('click', async () => {
   // Clear both sides of the state: local optimistic cache AND the
   // server journal + settled-match overrides. On-chain USDt transfers
-  // are still there on Sepolia; only the display is reset.
+  // are still there; only the off-chain display is reset.
+  //
+  // We also stamp a reset timestamp in localStorage so every refresh
+  // helper filters out any pre-reset event that a stale Lambda instance
+  // might still return in /api/journal. Without this, the Vercel /tmp
+  // split can silently repopulate the board a few seconds after reset.
   try {
+    const now = Date.now()
+    localStorage.setItem(RESET_AT_KEY, String(now))
     localStorage.removeItem(CLIENT_JOURNAL_KEY)
     localStorage.removeItem(HIDDEN_POOLS_KEY)
     await api('/api/dev/reset', { method: 'POST' })
