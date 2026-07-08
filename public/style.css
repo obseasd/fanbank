@@ -73,6 +73,12 @@
 /* ─── Reset + base ─── */
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+/* Force [hidden] to win over display: flex etc. */
+[hidden] { display: none !important; }
 body {
   background: var(--bg);
   color: var(--fg);
@@ -241,6 +247,52 @@ section, header, footer, main { position: relative; z-index: 1; }
 .wallet-pill.err .dot { background: var(--danger); }
 .wallet-pill .label { font-family: var(--font-mono); font-size: 12px; }
 
+/* Compact wallet chip. Replaces the pill entirely when connected: shows
+ * the truncated address plus USDt balance, clicks open the wallet modal.
+ * Same visual language as the pill (dot + rounded pill background) but
+ * denser to signal the wallet is active. */
+.wallet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: rgba(15, 32, 25, 0.72);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color var(--dur-fast), background var(--dur-fast), box-shadow var(--dur-med);
+}
+.wallet-chip:hover {
+  border-color: var(--tether);
+  background: rgba(19, 38, 33, 0.9);
+  box-shadow: 0 0 0 3px rgba(47, 186, 139, 0.10);
+}
+.wallet-chip .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tether-strong);
+  box-shadow: 0 0 12px var(--tether-glow);
+  animation: pulse 2.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+.wallet-chip .addr {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.wallet-chip .sep { color: var(--fg-dim); }
+.wallet-chip .bal {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--tether-strong);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ─── Buttons ─── */
 .btn {
   position: relative;
@@ -266,9 +318,13 @@ section, header, footer, main { position: relative; z-index: 1; }
 .btn:active:not(:disabled) { transform: translateY(0) scale(0.98); }
 
 .btn.primary {
-  background: linear-gradient(135deg, var(--tether) 0%, var(--tether-strong) 100%);
+  background: var(--g-500);
   color: #001510;
-  box-shadow: 0 6px 24px var(--tether-glow);
+  border-color: rgba(0, 0, 0, 0.14);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.14),
+    0 6px 20px rgba(47, 186, 139, 0.22);
 }
 /* Subtle sheen on hover */
 .btn.primary::before {
@@ -277,8 +333,8 @@ section, header, footer, main { position: relative; z-index: 1; }
   inset: 0;
   background: linear-gradient(120deg,
     transparent 0%,
-    rgba(255, 255, 255, 0.18) 45%,
-    rgba(255, 255, 255, 0.18) 55%,
+    rgba(255, 255, 255, 0.14) 45%,
+    rgba(255, 255, 255, 0.14) 55%,
     transparent 100%);
   transform: translateX(-120%);
   transition: transform var(--dur-slow) var(--ease-out);
@@ -286,9 +342,12 @@ section, header, footer, main { position: relative; z-index: 1; }
   z-index: -1;
 }
 .btn.primary:hover:not(:disabled) {
+  background: var(--tether-strong);
   transform: translateY(-1px);
-  filter: brightness(1.06);
-  box-shadow: 0 10px 32px var(--tether-glow);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.14),
+    0 10px 28px rgba(47, 186, 139, 0.32);
 }
 .btn.primary:hover:not(:disabled)::before { transform: translateX(120%); }
 
@@ -639,9 +698,15 @@ section, header, footer, main { position: relative; z-index: 1; }
 .how-card p { color: var(--fg-muted); font-size: 13px; margin: 0; line-height: 1.6; }
 
 /* ─── Panels (tip + pool + markets + audit) ─── */
+/* The tip and pool panels are laid out with subgrid so head / body /
+ * action / extras rows align across both cards. This is what keeps the
+ * two primary buttons on the same visual line even when the pool card
+ * has an "existing pools" list under it and the tip card only has a
+ * one-line hint. Falls back gracefully via grid-row: auto on mobile. */
 .panel-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto 1fr auto auto;
   gap: 14px;
 }
 .panel {
@@ -654,6 +719,10 @@ section, header, footer, main { position: relative; z-index: 1; }
   box-shadow: var(--shadow-soft);
   overflow: hidden;
   transition: border-color var(--dur-med), box-shadow var(--dur-med);
+  display: grid;
+  grid-template-rows: subgrid;
+  grid-row: span 4;
+  row-gap: 18px;
 }
 .panel::before {
   content: '';
@@ -702,15 +771,38 @@ section, header, footer, main { position: relative; z-index: 1; }
 }
 .panel-tag.usdt-badge svg { width: 22px; height: 22px; }
 
+/* Panel content rows. Each panel is a subgrid; these classes correspond
+ * to the four subgrid rows: head (via .panel-head), body, action, extras. */
+.panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.panel-body .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.panel-action { display: flex; }
+.panel-action .btn {
+  flex: 1;
+  justify-content: center;
+  padding: 14px 22px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.panel-extras { min-width: 0; }
+.panel-extras:empty { display: none; }
+
+/* Legacy .form-row class (kept for any external reference). */
 .form-row {
-  display: grid;
-  grid-template-columns: 1.2fr 1fr auto;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
-  align-items: end;
-  margin-bottom: 12px;
 }
 .form-row .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.form-row .field-team, .form-row .field-purpose { grid-column: 1 / -1; }
 .field label {
   font-size: 11px;
   color: var(--fg-muted);
@@ -762,8 +854,6 @@ section, header, footer, main { position: relative; z-index: 1; }
   color: var(--fg-muted);
   font-family: var(--font-mono);
 }
-
-.form-row .btn { align-self: end; }
 
 .hint {
   font-size: 12px;
@@ -1322,6 +1412,138 @@ footer {
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+/* ─── Generic modal (contribute / bet / settle / payout) ─── */
+/* Extends the base .modal + .modal-panel styles with a simpler head +
+ * form body + actions layout. One reusable component swapped between
+ * every prompt-style flow so the app has a single dialog language. */
+.generic-modal-panel { max-width: 460px; padding: 28px; }
+.generic-modal-head { margin-bottom: 20px; padding-right: 32px; }
+.generic-modal-title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin-bottom: 6px;
+}
+.generic-modal-desc {
+  color: var(--fg-muted);
+  font-size: 13px;
+  margin: 0;
+  line-height: 1.55;
+}
+.generic-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+}
+.generic-modal-body:empty { display: none; }
+.generic-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+}
+.generic-modal-field > label {
+  font-size: 11px;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+}
+.generic-modal-field input,
+.generic-modal-field select {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: rgba(14, 30, 26, 0.75);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  transition: border-color var(--dur-fast), background var(--dur-fast), box-shadow var(--dur-fast);
+  font-variant-numeric: tabular-nums;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.generic-modal-field select {
+  font-family: var(--font-sans);
+  cursor: pointer;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--fg-muted) 50%),
+    linear-gradient(-45deg, transparent 50%, var(--fg-muted) 50%);
+  background-position: right 18px center, right 12px center;
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+  padding-right: 40px;
+}
+.generic-modal-field input:focus,
+.generic-modal-field select:focus {
+  outline: none;
+  border-color: var(--tether);
+  background: rgba(14, 30, 26, 0.95);
+  box-shadow: 0 0 0 3px rgba(47, 186, 139, 0.15);
+}
+.generic-modal-field.with-suffix input { padding-right: 64px; }
+.generic-modal-field .suffix {
+  position: absolute;
+  right: 14px;
+  bottom: 13px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  pointer-events: none;
+}
+.generic-modal-preview {
+  background: rgba(8, 19, 15, 0.55);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.generic-modal-preview-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+.generic-modal-preview-row .to { color: var(--fg-muted); }
+.generic-modal-preview-row .amount {
+  color: var(--tether-strong);
+  font-variant-numeric: tabular-nums;
+}
+.generic-modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 24px;
+  justify-content: flex-end;
+}
+.generic-modal-actions .btn {
+  min-width: 108px;
+  justify-content: center;
+}
+
+/* ─── Audit note ─── */
+.audit-note {
+  margin: 16px 0 0;
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(8, 19, 15, 0.35);
+  line-height: 1.55;
+  font-family: var(--font-sans);
+}
+.audit-note strong { color: var(--fg-muted); font-weight: 500; }
+.audit-note a { color: var(--tether-strong); }
+.audit-note a:hover { text-decoration: underline; }
+
 /* ─── Toasts ─── */
 .toast-host {
   position: fixed;
@@ -1403,6 +1625,8 @@ footer {
   .nav-links { display: none; }
   .brand-tag { display: none; }
   .wallet-pill { padding: 8px 12px; font-size: 11px; }
+  .wallet-chip { padding: 6px 12px 6px 10px; gap: 8px; }
+  .wallet-chip .bal { display: none; }
 
   .hero { padding: 60px 20px 40px; }
   .hero h1 { font-size: clamp(34px, 8vw, 48px); }
@@ -1414,8 +1638,20 @@ footer {
   .stat-value { font-size: 20px; }
 
   .how, .panels { padding: 0 20px; margin-top: 64px; }
-  .how-grid, .panel-grid { grid-template-columns: 1fr; }
-  .panel { padding: 22px; }
+  .how-grid { grid-template-columns: 1fr; }
+  /* Unwind subgrid on mobile: panels stack, each becomes a normal flex column. */
+  .panel-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+  }
+  .panel {
+    display: flex;
+    flex-direction: column;
+    grid-row: auto;
+    padding: 22px;
+    row-gap: 0;
+    gap: 16px;
+  }
   .how-card { padding: 22px; }
 
   .market-row { grid-template-columns: 1fr; gap: 12px; padding: 16px 18px; }
@@ -1423,8 +1659,6 @@ footer {
   .footer-inner { grid-template-columns: 1fr; gap: 40px; padding: 0; }
   .footer-cols { grid-template-columns: repeat(2, 1fr); }
   footer { padding: 40px 20px 24px; margin-top: 80px; }
-
-  .form-row { grid-template-columns: 1fr; }
 
   .journal-row {
     grid-template-columns: auto 1fr;
@@ -1444,6 +1678,9 @@ footer {
   .toast { min-width: 0; max-width: 100%; }
 
   .modal-panel { padding: 24px; }
+  .generic-modal-panel { padding: 22px; }
+  .generic-modal-actions { flex-direction: column-reverse; }
+  .generic-modal-actions .btn { width: 100%; min-width: 0; }
 }
 
 @media (max-width: 520px) {
@@ -1451,4 +1688,5 @@ footer {
   .hero-cta { flex-direction: column; align-items: stretch; }
   .hero-cta .btn { justify-content: center; }
   .stats-strip { grid-template-columns: 1fr 1fr; }
+  .wallet-chip .addr { font-size: 11px; }
 }

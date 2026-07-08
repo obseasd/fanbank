@@ -33,6 +33,12 @@
       <span class="dot"></span>
       <span class="label">Connect wallet</span>
     </button>
+    <button id="wallet-chip" class="wallet-chip" type="button" hidden aria-label="Open wallet">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="addr">·</span>
+      <span class="sep" aria-hidden="true">·</span>
+      <span class="bal">0.00 USDt</span>
+    </button>
   </header>
 
   <!-- ─── HERO ─── -->
@@ -171,7 +177,7 @@
             <span>USDT</span>
           </span>
         </div>
-        <div class="form-row">
+        <div class="panel-body">
           <div class="field field-team">
             <label>Team</label>
             <div class="dropdown" data-dropdown="tip-team">
@@ -189,12 +195,16 @@
               <span>USDt</span>
             </div>
           </div>
+        </div>
+        <div class="panel-action">
           <button id="tip-btn" class="btn primary">
             <span>Send tip</span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
           </button>
         </div>
-        <div class="hint" id="tip-hint"></div>
+        <div class="panel-extras">
+          <div class="hint" id="tip-hint"></div>
+        </div>
       </div>
 
       <div class="panel">
@@ -205,7 +215,7 @@
           </div>
           <span class="panel-tag">Pool</span>
         </div>
-        <div class="form-row">
+        <div class="panel-body">
           <div class="field field-purpose">
             <label>Purpose</label>
             <input id="pool-purpose" placeholder="Watch-party fund, semi-final tickets…" />
@@ -230,11 +240,15 @@
               <div class="dd-panel" role="listbox"></div>
             </div>
           </div>
+        </div>
+        <div class="panel-action">
           <button id="pool-create-btn" class="btn primary">
             <span>Open pool</span>
           </button>
         </div>
-        <div id="pools-list" class="rows-list"></div>
+        <div class="panel-extras">
+          <div id="pools-list" class="rows-list"></div>
+        </div>
       </div>
     </div>
   </section>
@@ -257,6 +271,11 @@
       <p>Every economic event is timestamped with an on-chain transaction hash. Click any row to verify it on Etherscan.</p>
     </div>
     <div class="journal" id="journal"></div>
+    <p class="audit-note">
+      <strong>Demo instance.</strong>
+      Live txs settle on Sepolia and are permanent. Off-chain journal state may reset on serverless cold start; verify any tx directly on
+      <a href="https://sepolia.etherscan.io" target="_blank" rel="noopener">sepolia.etherscan.io</a>.
+    </p>
   </section>
 
   <!-- ─── FOOTER ─── -->

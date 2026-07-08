@@ -186,14 +186,26 @@ async function refreshConnectedBalances () {
 
 function updatePillAndModal () {
   const pill = $('#wallet-pill')
+  const chip = $('#wallet-chip')
+
   if (!CONNECTED) {
+    // Disconnected: show the big "Connect wallet" pill, hide the chip.
+    pill.hidden = false
+    if (chip) chip.hidden = true
     pill.classList.remove('ok', 'err')
     pill.querySelector('.label').textContent = 'Connect wallet'
     return
   }
-  pill.classList.add('ok')
-  pill.classList.remove('err')
-  pill.querySelector('.label').textContent = `${shortAddr(CONNECTED.address)} · ${fmtUsdt(CONNECTED.usdt)}`
+
+  // Connected: swap the pill out for the compact chip. The chip stays
+  // in the same slot on the right of the nav and opens the wallet modal
+  // on click (wired at the bottom of this file).
+  pill.hidden = true
+  if (chip) {
+    chip.hidden = false
+    chip.querySelector('.addr').textContent = shortAddr(CONNECTED.address)
+    chip.querySelector('.bal').textContent = fmtUsdt(CONNECTED.usdt)
+  }
 
   $('#modal-address').textContent = CONNECTED.address
   $('#modal-usdt').textContent = fmtUsdt(CONNECTED.usdt)
@@ -248,6 +260,231 @@ async function ensureConnected () {
   if (CONNECTED) return CONNECTED
   openWalletModal()
   throw new Error('Please connect a wallet first')
+}
+
+/* ─── Generic modal ─────────────────────────────────────────────────
+ *
+ * Reusable dialog that replaces prompt() and confirm() everywhere.
+ * One DOM container is lazily created on first call and reused for
+ * every subsequent open. openModal({ title, description, fields, ... })
+ * returns a Promise that resolves with { name: value, ... } on submit,
+ * or null on cancel / Escape / backdrop click.
+ *
+ * Supported field types:
+ *   - text     { name, label, placeholder?, defaultValue?, required? }
+ *   - number   { name, label, min?, max?, step?, suffix?, defaultValue? }
+ *   - select   { name, label, options: [{ value, label }], defaultValue? }
+ *   - preview  { name, label?, html }   read-only rendered block
+ *
+ * Focus lands on the first interactive control on open and returns to
+ * the trigger element on close. Tab wraps within the modal.
+ */
+
+let _genericModalOpen = false
+let _genericModalCancel = null
+let _lastFocusedBeforeModal = null
+
+function _ensureGenericModal () {
+  if (document.getElementById('generic-modal')) return
+  const wrap = document.createElement('div')
+  wrap.id = 'generic-modal'
+  wrap.className = 'modal'
+  wrap.setAttribute('role', 'dialog')
+  wrap.setAttribute('aria-modal', 'true')
+  wrap.setAttribute('aria-labelledby', 'generic-modal-title')
+  wrap.hidden = true
+  wrap.innerHTML = `
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel generic-modal-panel">
+      <button class="modal-close" data-close type="button" aria-label="Close">×</button>
+      <div class="generic-modal-head">
+        <div class="generic-modal-title" id="generic-modal-title"></div>
+        <p class="generic-modal-desc" hidden></p>
+      </div>
+      <form class="generic-modal-body" novalidate></form>
+      <div class="generic-modal-actions">
+        <button type="button" class="btn ghost" data-role="cancel">Cancel</button>
+        <button type="button" class="btn primary" data-role="submit">Confirm</button>
+      </div>
+    </div>
+  `
+  document.body.appendChild(wrap)
+}
+
+function _escapeAttr (v) {
+  return String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function _fieldToHTML (f, idx) {
+  const inputId = `gmf-${(f.name || 'field').replace(/[^a-z0-9_-]/gi, '')}-${idx}`
+  const labelHTML = f.label ? `<label for="${inputId}">${_escapeAttr(f.label)}</label>` : ''
+  const suffix = f.suffix ? `<span class="suffix">${_escapeAttr(f.suffix)}</span>` : ''
+  const wrapCls = 'generic-modal-field' + (f.suffix ? ' with-suffix' : '')
+
+  if (f.type === 'preview') {
+    return `<div class="${wrapCls}" data-field-name="${_escapeAttr(f.name || '')}">
+      ${labelHTML}
+      <div class="generic-modal-preview">${f.html || ''}</div>
+    </div>`
+  }
+  if (f.type === 'select') {
+    const opts = (f.options || []).map(o =>
+      `<option value="${_escapeAttr(o.value)}" ${o.value === f.defaultValue ? 'selected' : ''}>${_escapeAttr(o.label)}</option>`
+    ).join('')
+    return `<div class="${wrapCls}" data-field-name="${_escapeAttr(f.name || '')}">
+      ${labelHTML}
+      <select id="${inputId}" name="${_escapeAttr(f.name)}">${opts}</select>
+    </div>`
+  }
+  const type = f.type || 'text'
+  const attrs = [
+    `id="${inputId}"`,
+    `name="${_escapeAttr(f.name)}"`,
+    `type="${type}"`,
+    f.placeholder != null ? `placeholder="${_escapeAttr(f.placeholder)}"` : '',
+    f.min != null ? `min="${_escapeAttr(f.min)}"` : '',
+    f.max != null ? `max="${_escapeAttr(f.max)}"` : '',
+    f.step != null ? `step="${_escapeAttr(f.step)}"` : (type === 'number' ? 'step="0.01"' : ''),
+    f.defaultValue != null ? `value="${_escapeAttr(f.defaultValue)}"` : '',
+    'autocomplete="off"',
+    type === 'number' ? 'inputmode="decimal"' : '',
+  ].filter(Boolean).join(' ')
+  return `<div class="${wrapCls}" data-field-name="${_escapeAttr(f.name || '')}">
+    ${labelHTML}
+    <input ${attrs} />${suffix}
+  </div>`
+}
+
+function _validateFields (form, fields) {
+  for (const f of fields) {
+    if (f.type === 'preview') continue
+    if (f.required === false) continue
+    const el = form.elements[f.name]
+    if (!el) continue
+    const v = (el.value == null ? '' : String(el.value)).trim()
+    if (!v) return false
+    if (f.type === 'number') {
+      const n = Number(v)
+      if (!Number.isFinite(n)) return false
+      if (f.min != null && n < Number(f.min)) return false
+      if (f.max != null && n > Number(f.max)) return false
+      if (f.min == null && n <= 0) return false
+    }
+  }
+  return true
+}
+
+function _focusables (root) {
+  return [...root.querySelectorAll(
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  )].filter(el => !el.hidden && el.offsetParent !== null)
+}
+
+async function openModal ({ title, description, fields = [], submit = 'Confirm', cancel = 'Cancel' } = {}) {
+  _ensureGenericModal()
+  const root = document.getElementById('generic-modal')
+  const titleEl = root.querySelector('.generic-modal-title')
+  const descEl = root.querySelector('.generic-modal-desc')
+  const body = root.querySelector('.generic-modal-body')
+  const submitBtn = root.querySelector('[data-role="submit"]')
+  const cancelBtn = root.querySelector('[data-role="cancel"]')
+
+  titleEl.textContent = title || ''
+  if (description) {
+    descEl.hidden = false
+    descEl.textContent = description
+  } else {
+    descEl.hidden = true
+    descEl.textContent = ''
+  }
+  body.innerHTML = fields.map((f, i) => _fieldToHTML(f, i)).join('')
+  submitBtn.textContent = submit
+  cancelBtn.textContent = cancel
+
+  _lastFocusedBeforeModal = document.activeElement
+  root.hidden = false
+  _genericModalOpen = true
+
+  const revalidate = () => { submitBtn.disabled = !_validateFields(body, fields) }
+  revalidate()
+  body.addEventListener('input', revalidate)
+  body.addEventListener('change', revalidate)
+
+  // Focus first control (input/select) or fall back to the submit button
+  // for confirm-only dialogs like payout preview.
+  const firstControl = body.querySelector('input:not([disabled]), select:not([disabled]), textarea:not([disabled])') || submitBtn
+  setTimeout(() => { try { firstControl.focus() } catch {} }, 30)
+
+  return new Promise(resolve => {
+    let done = false
+    const finish = value => {
+      if (done) return
+      done = true
+      cleanup()
+      resolve(value)
+    }
+
+    const onSubmit = () => {
+      if (submitBtn.disabled) return
+      const out = {}
+      for (const f of fields) {
+        if (f.type === 'preview') continue
+        const el = body.elements[f.name]
+        if (!el) continue
+        out[f.name] = f.type === 'number' ? Number(el.value) : el.value
+      }
+      finish(out)
+    }
+    const onCancel = () => finish(null)
+    const onBackdropClick = e => {
+      const t = e.target
+      if (t && t.dataset && Object.prototype.hasOwnProperty.call(t.dataset, 'close')) finish(null)
+    }
+    const onKey = e => {
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        finish(null)
+        return
+      }
+      if (e.key === 'Enter' && document.activeElement && document.activeElement.tagName !== 'TEXTAREA' && document.activeElement.tagName !== 'SELECT') {
+        // Enter submits the form when valid.
+        if (!submitBtn.disabled) {
+          e.preventDefault()
+          onSubmit()
+        }
+        return
+      }
+      if (e.key === 'Tab') {
+        // Focus trap: wrap around the interactive elements inside the panel.
+        const f = _focusables(root)
+        if (!f.length) return
+        const first = f[0], last = f[f.length - 1]
+        const active = document.activeElement
+        if (e.shiftKey && active === first) { e.preventDefault(); last.focus() }
+        else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus() }
+      }
+    }
+
+    _genericModalCancel = () => finish(null)
+
+    root.addEventListener('click', onBackdropClick)
+    root.addEventListener('keydown', onKey)
+    submitBtn.addEventListener('click', onSubmit)
+    cancelBtn.addEventListener('click', onCancel)
+
+    function cleanup () {
+      root.hidden = true
+      _genericModalOpen = false
+      _genericModalCancel = null
+      root.removeEventListener('click', onBackdropClick)
+      root.removeEventListener('keydown', onKey)
+      submitBtn.removeEventListener('click', onSubmit)
+      cancelBtn.removeEventListener('click', onCancel)
+      body.removeEventListener('input', revalidate)
+      body.removeEventListener('change', revalidate)
+      try { _lastFocusedBeforeModal?.focus?.() } catch {}
+    }
+  })
 }
 
 /* ─── Client-side USDt transfer via ethers (external mode) ─── */
@@ -458,18 +695,26 @@ async function refreshPools () {
 }
 
 async function contributeToPool (poolId) {
-  const amount = prompt('USDt amount to contribute?', '1')
-  if (!amount) return
+  const values = await openModal({
+    title: 'Contribute to pool',
+    description: 'Signs a USDt transfer from your wallet into the pool escrow.',
+    fields: [
+      { name: 'amount', label: 'Amount', type: 'number', placeholder: '1.00', min: 0.01, step: 0.01, suffix: 'USDt', defaultValue: 1 },
+    ],
+    submit: 'Send contribution',
+  })
+  if (!values) return
+  const amount = Number(values.amount)
   try {
     await ensureConnected()
     let receipt
     if (CONNECTED.mode === 'external') {
-      receipt = await transferUsdt(CONFIG.escrow, Number(amount))
+      receipt = await transferUsdt(CONFIG.escrow, amount)
       await api(`/api/pool/${poolId}/contribute/external`, { method: 'POST', body: {
-        amount: Number(amount), txHash: receipt.hash, from: receipt.from, to: CONFIG.escrow,
+        amount, txHash: receipt.hash, from: receipt.from, to: CONFIG.escrow,
       } })
     } else {
-      const r = await api(`/api/pool/${poolId}/contribute`, { method: 'POST', body: { amount: Number(amount) } })
+      const r = await api(`/api/pool/${poolId}/contribute`, { method: 'POST', body: { amount } })
       receipt = r.receipt
     }
     toast({ level: 'ok', title: `Contributed ${fmtUsdt(amount)}`, txHash: receipt.hash })
@@ -483,10 +728,23 @@ async function payoutPool (poolId) {
   try {
     const { split, policy, totalUsdt } = await api(`/api/pool/${poolId}/split`)
     if (!split.length) return toast({ level: 'err', title: 'Nothing to split yet' })
-    const preview = split.map(s => `  ${shortAddr(s.address)} ← ${fmtUsdt(s.amountUsdt)}`).join('\n')
-    if (!confirm(`Payout ${fmtUsdt(totalUsdt)} with policy "${policy}"?\n\n${preview}`)) return
+    const previewHTML = split.map(s => `
+      <div class="generic-modal-preview-row">
+        <span class="to">${shortAddr(s.address)}</span>
+        <span class="amount">${fmtUsdt(s.amountUsdt)}</span>
+      </div>
+    `).join('')
+    const values = await openModal({
+      title: 'Confirm payout',
+      description: `Sending ${fmtUsdt(totalUsdt)} using the "${policy}" policy across ${split.length} recipients.`,
+      fields: [
+        { name: '_preview', type: 'preview', label: 'Split preview', html: previewHTML },
+      ],
+      submit: 'Send payouts',
+    })
+    if (!values) return
     // Pool payout always flows from the operator's server-side WDK wallet
-    // (it holds the pooled USDt). Operators + judges can flip this later.
+    // (it holds the pooled USDt). Operators and judges can flip this later.
     await api(`/api/pool/${poolId}/payout`, { method: 'POST', body: {} })
     toast({ level: 'ok', title: 'Pool paid out', desc: `${fmtUsdt(totalUsdt)} across ${split.length} recipients` })
     await Promise.all([refreshConnectedBalances(), refreshStats(), refreshPools(), refreshJournal()])
@@ -563,21 +821,37 @@ function oddCell (m, outcome, team, isOpen, labelOverride) {
 }
 
 async function placeBet (matchId, outcome) {
-  const amount = prompt(`Stake in USDt on "${outcome}" ?`, '1')
-  if (!amount) return
+  const match = MATCHES.find(x => x.id === matchId) || {}
+  const home = TEAMS.find(t => t.id === match.home)
+  const away = TEAMS.find(t => t.id === match.away)
+  const outcomeLabel = outcome === 'home' ? (home?.name || 'Home wins')
+                     : outcome === 'away' ? (away?.name || 'Away wins')
+                     : 'Draw'
+  const matchLabel = home && away ? `${home.name} vs ${away.name}` : (match.id || matchId)
+
+  const values = await openModal({
+    title: `Bet on ${outcomeLabel}`,
+    description: `${matchLabel}. Signs a USDt transfer from your wallet into the market escrow.`,
+    fields: [
+      { name: 'amount', label: 'Stake', type: 'number', placeholder: '1.00', min: 0.01, step: 0.01, suffix: 'USDt', defaultValue: 1 },
+    ],
+    submit: 'Place bet',
+  })
+  if (!values) return
+  const amount = Number(values.amount)
   try {
     await ensureConnected()
     let receipt
     if (CONNECTED.mode === 'external') {
-      receipt = await transferUsdt(CONFIG.escrow, Number(amount))
+      receipt = await transferUsdt(CONFIG.escrow, amount)
       await api('/api/bet/external', { method: 'POST', body: {
-        matchId, outcome, amount: Number(amount), txHash: receipt.hash, from: receipt.from, to: CONFIG.escrow,
+        matchId, outcome, amount, txHash: receipt.hash, from: receipt.from, to: CONFIG.escrow,
       } })
     } else {
-      const r = await api('/api/bet', { method: 'POST', body: { matchId, outcome, amount: Number(amount) } })
+      const r = await api('/api/bet', { method: 'POST', body: { matchId, outcome, amount } })
       receipt = r.receipt
     }
-    toast({ level: 'ok', title: `Bet placed: ${fmtUsdt(amount)} on ${outcome}`, txHash: receipt.hash })
+    toast({ level: 'ok', title: `Bet placed: ${fmtUsdt(amount)} on ${outcomeLabel}`, txHash: receipt.hash })
     await Promise.all([refreshConnectedBalances(), refreshStats(), refreshMarkets(), refreshJournal()])
   } catch (e) {
     toast({ level: 'err', title: 'Bet failed', desc: e.message })
@@ -585,13 +859,30 @@ async function placeBet (matchId, outcome) {
 }
 
 async function settleDemoDialog (matchId) {
-  const outcome = prompt('Result (home / away / draw)?', 'home')
-  if (!outcome) return
-  const score = prompt('Final score (e.g. 2-1)?', '') || null
+  const match = MATCHES.find(x => x.id === matchId) || {}
+  const home = TEAMS.find(t => t.id === match.home)
+  const away = TEAMS.find(t => t.id === match.away)
+  const values = await openModal({
+    title: 'Settle demo market',
+    description: 'Judges only. Records a fake result and triggers payouts for the winning side.',
+    fields: [
+      { name: 'outcome', label: 'Result', type: 'select', defaultValue: 'home', options: [
+        { value: 'home', label: `Home wins (${home?.name || match.home || 'home'})` },
+        { value: 'draw', label: 'Draw' },
+        { value: 'away', label: `Away wins (${away?.name || match.away || 'away'})` },
+      ] },
+      { name: 'score', label: 'Final score', type: 'text', placeholder: '2-1', required: false },
+    ],
+    submit: 'Settle market',
+  })
+  if (!values) return
   try {
-    await api(`/api/match/${matchId}/settle-demo`, { method: 'POST', body: { outcome, score } })
+    await api(`/api/match/${matchId}/settle-demo`, { method: 'POST', body: {
+      outcome: values.outcome,
+      score: values.score && values.score.trim() ? values.score.trim() : null,
+    } })
     const r = await api(`/api/market/${matchId}/settle`, { method: 'POST' })
-    toast({ level: 'ok', title: 'Market settled', desc: `${r.payouts} payouts · ${fmtUsdt(r.netPoolUsdt)} distributed` })
+    toast({ level: 'ok', title: 'Market settled', desc: `${r.payouts} payouts, ${fmtUsdt(r.netPoolUsdt)} distributed` })
     await Promise.all([refreshConnectedBalances(), refreshStats(), refreshMarkets(), refreshJournal()])
   } catch (e) {
     toast({ level: 'err', title: 'Settle failed', desc: e.message })
@@ -690,9 +981,16 @@ async function loadConfig () {
 
 // Wire buttons
 $('#wallet-pill').addEventListener('click', openWalletModal)
+$('#wallet-chip')?.addEventListener('click', openWalletModal)
 $('#hero-connect').addEventListener('click', openWalletModal)
 $$('#wallet-modal [data-close]').forEach(el => el.addEventListener('click', closeWalletModal))
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeWalletModal() })
+// Escape: the generic modal handles its own key (via stopPropagation).
+// This fallback closes the wallet modal only when no generic modal is up.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return
+  if (_genericModalOpen) return
+  if (!$('#wallet-modal').hidden) closeWalletModal()
+})
 
 $('#tip-btn').addEventListener('click', submitTip)
 $('#pool-create-btn').addEventListener('click', submitPool)
