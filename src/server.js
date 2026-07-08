@@ -17,6 +17,7 @@ import express from 'express'
 import rateLimit from 'express-rate-limit'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ethers } from 'ethers'
 
 import { createFanWallet } from './wdk/wallet.js'
 import { TEAMS, getTeam } from './fan/teams.js'
@@ -312,6 +313,27 @@ app.post('/api/dev/reset', async (_req, res) => {
     resetMatchOverrides()
     res.json({ ok: true, cleared: ['journal', 'match-overrides'] })
   } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+/// Demo-only faucet: mint MockUSDT from the operator wallet to the given
+/// address. Used by the "Mint 10,000 test USDt" button when the fan is
+/// in demo (server-signed) mode, since the mint() call in that case
+/// cannot come from the browser signer.
+app.post('/api/dev/mint', async (req, res) => {
+  if (!requireWallet(res)) return
+  try {
+    const { to, amount } = req.body ?? {}
+    const target = ethers.isAddress(to) ? to : wallet.address
+    const amt = Number(amount) || 10000
+    const MINT_ABI = ['function mint(address to, uint256 amount) external']
+    if (!wallet.usdtAddress) throw new Error('USDT_ADDRESS not configured')
+    const contract = new ethers.Contract(wallet.usdtAddress, MINT_ABI, wallet.signer)
+    const raw = ethers.parseUnits(String(amt), wallet.usdtDecimals)
+    const tx = await contract.mint(target, raw)
+    const receipt = await tx.wait()
+    if (receipt.status !== 1) throw new Error('Mint reverted on chain')
+    res.json({ hash: tx.hash, to: target, amount: amt, blockNumber: receipt.blockNumber })
+  } catch (e) { res.status(400).json({ error: e.message }) }
 })
 
 // Local dev entry: node src/server.js. On Vercel we import { app } from

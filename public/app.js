@@ -301,6 +301,10 @@ function updatePillAndModal () {
   $('#modal-usdt').textContent = fmtUsdt(CONNECTED.usdt)
   $('#modal-gas').textContent = fmtGas(CONNECTED.gas)
   $('#modal-explorer').href = `${CONFIG.explorer}/address/${CONNECTED.address}`
+  // Chain row reads the live server config so a chain flip on Vercel
+  // immediately reflects in the modal instead of showing stale HTML.
+  const chainEl = $('#modal-chain')
+  if (chainEl) chainEl.textContent = `${CONFIG.chainName || 'Unknown'} · chainId ${CONFIG.chainId}`
   $('#connected-source').textContent = CONNECTED.mode === 'external'
     ? `Signed from your browser wallet. FanBank never sees your seed.`
     : `Using the shared demo wallet on the server. All tx sign from the same WDK seed.`
@@ -1334,8 +1338,8 @@ $('#modal-disconnect').addEventListener('click', () => { disconnect(); closeWall
 // can top itself up with 10 000 USDt in one signed tx. Removes the
 // "your MetaMask has 0 USDt" onboarding cliff for judges and users.
 $('#modal-mint')?.addEventListener('click', async () => {
-  if (!CONNECTED || CONNECTED.mode !== 'external') {
-    return toast({ level: 'err', title: 'Connect an external wallet first' })
+  if (!CONNECTED) {
+    return toast({ level: 'err', title: 'Connect a wallet first' })
   }
   if (!CONFIG?.usdt?.address) {
     return toast({ level: 'err', title: 'USDt contract not configured' })
@@ -1343,17 +1347,30 @@ $('#modal-mint')?.addEventListener('click', async () => {
   const btn = $('#modal-mint')
   btn.disabled = true
   const originalLabel = btn.textContent
-  btn.textContent = 'Waiting for signature…'
   try {
-    const MINT_ABI = ['function mint(address to, uint256 amount) external']
-    const contract = new ethers.Contract(CONFIG.usdt.address, MINT_ABI, CONNECTED.signer)
-    const amount = ethers.parseUnits('10000', CONFIG.usdt.decimals)
-    btn.textContent = 'Sign in your wallet…'
-    const tx = await contract.mint(CONNECTED.address, amount)
-    btn.textContent = 'Confirming…'
-    const receipt = await tx.wait()
-    if (receipt.status !== 1) throw new Error('Mint reverted on chain')
-    toast({ level: 'ok', title: 'Minted 10,000 USDt', txHash: tx.hash })
+    let txHash
+    if (CONNECTED.mode === 'external') {
+      // Fan holds their own key: sign the mint from their browser wallet.
+      btn.textContent = 'Sign in your wallet…'
+      const MINT_ABI = ['function mint(address to, uint256 amount) external']
+      const contract = new ethers.Contract(CONFIG.usdt.address, MINT_ABI, CONNECTED.signer)
+      const amount = ethers.parseUnits('10000', CONFIG.usdt.decimals)
+      const tx = await contract.mint(CONNECTED.address, amount)
+      btn.textContent = 'Confirming…'
+      const receipt = await tx.wait()
+      if (receipt.status !== 1) throw new Error('Mint reverted on chain')
+      txHash = tx.hash
+    } else {
+      // Demo mode: no browser signer available, ask the server to mint
+      // via its WDK-owned wallet. Same on-chain effect, same audit trail.
+      btn.textContent = 'Minting via server wallet…'
+      const r = await api('/api/dev/mint', {
+        method: 'POST',
+        body: { to: CONNECTED.address, amount: 10000 },
+      })
+      txHash = r.hash
+    }
+    toast({ level: 'ok', title: 'Minted 10,000 USDt', txHash })
     await refreshConnectedBalances()
   } catch (e) {
     toast({ level: 'err', title: 'Mint failed', desc: e?.shortMessage || e?.message || 'Unknown error' })
