@@ -27,12 +27,14 @@ Every state change is a signed USDt tx on chain. Every event is emitted by one o
 
 ## Live contracts (Base Sepolia)
 
-| Contract | Address | Verify |
+All three primitive contracts are **verified on Basescan** with source code, ABI, and constructor args publicly readable. Click any address to open the Contract tab and inspect the source.
+
+| Contract | Address | Verified |
 |---|---|---|
-| MockUSDT | `0x596D6c5ac929d5a5117af397c174709A7Aa6C858` | [basescan](https://sepolia.basescan.org/address/0x596D6c5ac929d5a5117af397c174709A7Aa6C858) |
-| **FanTipRouter** | `0x55486bA74bcBF84B414802c8B6AB8f18BF3ABA6c` | [basescan](https://sepolia.basescan.org/address/0x55486bA74bcBF84B414802c8B6AB8f18BF3ABA6c) |
-| **FanPoolManager** | `0x0945c05D14632c4387210357819A3f0157f2D8Fd` | [basescan](https://sepolia.basescan.org/address/0x0945c05D14632c4387210357819A3f0157f2D8Fd) |
-| **ParimutuelMarket** | `0xA77b282D03E8f894EdDBf1D5034D4B819b5D3220` | [basescan](https://sepolia.basescan.org/address/0xA77b282D03E8f894EdDBf1D5034D4B819b5D3220) |
+| MockUSDT | `0x596D6c5ac929d5a5117af397c174709A7Aa6C858` | [source ✓](https://sepolia.basescan.org/address/0x596D6c5ac929d5a5117af397c174709A7Aa6C858#code) |
+| **FanTipRouter** | `0x55486bA74bcBF84B414802c8B6AB8f18BF3ABA6c` | [source ✓](https://sepolia.basescan.org/address/0x55486bA74bcBF84B414802c8B6AB8f18BF3ABA6c#code) |
+| **FanPoolManager** | `0x0945c05D14632c4387210357819A3f0157f2D8Fd` | [source ✓](https://sepolia.basescan.org/address/0x0945c05D14632c4387210357819A3f0157f2D8Fd#code) |
+| **ParimutuelMarket** | `0xA77b282D03E8f894EdDBf1D5034D4B819b5D3220` | [source ✓](https://sepolia.basescan.org/address/0xA77b282D03E8f894EdDBf1D5034D4B819b5D3220#code) |
 
 Deployer / operator wallet: `0x27986593ef158751FB8627610E9B7d6387723e53`.
 
