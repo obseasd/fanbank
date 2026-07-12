@@ -8,3 +8,6 @@ build/
 .next/
 data/*.json
 !data/.gitkeep
+lib/
+out/
+cache/
