@@ -523,6 +523,27 @@ function _fieldToHTML (f, idx) {
       <div class="generic-modal-preview">${f.html || ''}</div>
     </div>`
   }
+  if (f.type === 'score-pair') {
+    // Two number inputs separated by a dash, one per team. Values are
+    // stored under `<name>_home` and `<name>_away` so the caller can
+    // assemble a "N-N" string on submit.
+    const homeId = `gmf-${(f.name || 'score').replace(/[^a-z0-9_-]/gi, '')}-h-${idx}`
+    const awayId = `gmf-${(f.name || 'score').replace(/[^a-z0-9_-]/gi, '')}-a-${idx}`
+    return `<div class="${wrapCls} score-pair-field" data-field-name="${_escapeAttr(f.name || '')}">
+      ${labelHTML}
+      <div class="score-pair-inputs">
+        <div class="score-pair-slot">
+          <span class="score-pair-team">${_escapeAttr(f.homeLabel || 'Home')}</span>
+          <input id="${homeId}" name="${_escapeAttr(f.name)}_home" type="number" min="0" step="1" placeholder="0" inputmode="numeric" autocomplete="off" value="${f.defaultHome != null ? _escapeAttr(f.defaultHome) : ''}" />
+        </div>
+        <span class="score-pair-sep">-</span>
+        <div class="score-pair-slot">
+          <span class="score-pair-team">${_escapeAttr(f.awayLabel || 'Away')}</span>
+          <input id="${awayId}" name="${_escapeAttr(f.name)}_away" type="number" min="0" step="1" placeholder="0" inputmode="numeric" autocomplete="off" value="${f.defaultAway != null ? _escapeAttr(f.defaultAway) : ''}" />
+        </div>
+      </div>
+    </div>`
+  }
   if (f.type === 'select') {
     const opts = (f.options || []).map(o =>
       `<option value="${_escapeAttr(o.value)}" ${o.value === f.defaultValue ? 'selected' : ''}>${_escapeAttr(o.label)}</option>`
@@ -554,6 +575,22 @@ function _fieldToHTML (f, idx) {
 function _validateFields (form, fields) {
   for (const f of fields) {
     if (f.type === 'preview') continue
+    if (f.type === 'score-pair') {
+      // Both goal boxes must carry a non-negative integer when this
+      // field is required. Optional score-pair fields pass through
+      // even when empty (they resolve to null on submit).
+      if (f.required === false) continue
+      const home = form.elements[`${f.name}_home`]
+      const away = form.elements[`${f.name}_away`]
+      if (!home || !away) continue
+      for (const el of [home, away]) {
+        const v = (el.value == null ? '' : String(el.value)).trim()
+        if (!v) return false
+        const n = Number(v)
+        if (!Number.isFinite(n) || n < 0) return false
+      }
+      continue
+    }
     if (f.required === false) continue
     const el = form.elements[f.name]
     if (!el) continue
@@ -633,6 +670,20 @@ async function openModal ({ title, description, fields = [], submit = 'Confirm',
       const out = {}
       for (const f of fields) {
         if (f.type === 'preview') continue
+        if (f.type === 'score-pair') {
+          const homeEl = body.elements[`${f.name}_home`]
+          const awayEl = body.elements[`${f.name}_away`]
+          const homeVal = homeEl?.value?.toString().trim()
+          const awayVal = awayEl?.value?.toString().trim()
+          const home = homeVal === '' || homeVal == null ? null : Number(homeVal)
+          const away = awayVal === '' || awayVal == null ? null : Number(awayVal)
+          out[f.name] = {
+            home,
+            away,
+            formatted: home != null && away != null ? `${home}-${away}` : null,
+          }
+          continue
+        }
         const el = body.elements[f.name]
         if (!el) continue
         out[f.name] = f.type === 'number' ? Number(el.value) : el.value
@@ -1605,26 +1656,40 @@ async function settleDemoDialog (matchId) {
   const match = MATCHES.find(x => x.id === matchId) || {}
   const home = TEAMS.find(t => t.id === match.home)
   const away = TEAMS.find(t => t.id === match.away)
+  const homeName = home?.name || match.home || 'Home'
+  const awayName = away?.name || match.away || 'Away'
   const values = await openModal({
     title: 'Settle demo market',
-    description: 'Judges only. Records a fake result and triggers payouts for the winning side.',
+    description: 'Judges only. Enter the final score and pick the winning side. Payouts trigger for that side.',
     fields: [
+      { name: 'score', label: 'Final score', type: 'score-pair', homeLabel: homeName, awayLabel: awayName, required: false },
       { name: 'outcome', label: 'Result', type: 'select', defaultValue: 'home', options: [
-        { value: 'home', label: `${home?.name || match.home || 'home'} wins` },
+        { value: 'home', label: `${homeName} wins` },
         { value: 'draw', label: 'Draw' },
-        { value: 'away', label: `${away?.name || match.away || 'away'} wins` },
+        { value: 'away', label: `${awayName} wins` },
       ] },
-      { name: 'score', label: 'Final score', type: 'text', placeholder: '2-1', required: false },
     ],
     submit: 'Settle market',
   })
   if (!values) return
-  const toastId = toast({ level: 'ok', title: 'Settling market...', desc: `${home?.name || match.home} vs ${away?.name || match.away}`, timeout: 30_000 })
+  // If the user typed a score but not an explicit outcome adjustment, derive
+  // the outcome from the scores so a "3-1" plus a stale default "home" that
+  // no longer matches gets caught in the obvious case. We only override when
+  // both scores are set and the derived winner disagrees with the selected
+  // outcome, and only when the user did not explicitly pick Draw.
+  const scoreObj = values.score || {}
+  let outcome = values.outcome
+  if (scoreObj.home != null && scoreObj.away != null && outcome !== 'draw') {
+    const derived = scoreObj.home > scoreObj.away ? 'home' : scoreObj.home < scoreObj.away ? 'away' : 'draw'
+    outcome = derived
+  }
+  const scoreString = scoreObj.formatted // "N-N" or null
+  const toastId = toast({ level: 'ok', title: 'Settling market...', desc: `${homeName} vs ${awayName}${scoreString ? ' · ' + scoreString : ''}`, timeout: 30_000 })
   try {
     await syncLocalBetsToServer(matchId)
     await api(`/api/match/${matchId}/settle-demo`, { method: 'POST', body: {
-      outcome: values.outcome,
-      score: values.score && values.score.trim() ? values.score.trim() : null,
+      outcome,
+      score: scoreString,
     } })
     const r = await api(`/api/market/${matchId}/settle`, { method: 'POST' })
     dismissToast(toastId)
