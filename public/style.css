@@ -1164,6 +1164,249 @@ section, header, footer, main { position: relative; z-index: 1; }
 .empty-state .empty-title { font-size: 14px; font-weight: 600; color: var(--fg); }
 .empty-state .empty-desc { font-size: 13px; max-width: 44ch; line-height: 1.5; }
 
+/* ─── Bracket demo ─── */
+.bracket-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.bracket-demo-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.bracket-status {
+  margin-left: auto;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--fg-dim);
+  background: rgba(8, 19, 15, 0.5);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.bracket-board {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+  align-items: center;
+  padding: 20px 16px;
+  background: rgba(8, 19, 15, 0.4);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  min-height: 340px;
+}
+@media (max-width: 900px) {
+  .bracket-board {
+    grid-template-columns: 1fr;
+  }
+}
+.bracket-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  justify-content: center;
+}
+.bracket-col-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-align: center;
+  padding-bottom: 6px;
+}
+.bracket-match {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  background: rgba(14, 30, 26, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+}
+.bracket-match.live {
+  border-color: var(--tether-strong);
+  box-shadow: 0 0 0 3px rgba(38, 161, 123, 0.16);
+  transform: translateY(-2px);
+}
+.bracket-match.settled {
+  border-color: rgba(255, 255, 255, 0.06);
+  opacity: 0.9;
+}
+.bracket-team {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: transparent;
+  border-radius: 6px;
+  transition: background 200ms ease, color 200ms ease;
+}
+.bracket-team.winner {
+  background: rgba(38, 161, 123, 0.16);
+  color: var(--fg);
+  font-weight: 600;
+}
+.bracket-team.loser {
+  color: var(--fg-dim);
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 100, 110, 0.5);
+}
+.bracket-team .team-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.bracket-team .team-info img {
+  width: 18px;
+  height: auto;
+  border-radius: 2px;
+}
+.bracket-team .team-info .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bracket-team .team-pool {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  color: var(--tether-strong);
+  font-variant-numeric: tabular-nums;
+}
+.bracket-team.loser .team-pool {
+  color: rgba(255, 100, 110, 0.55);
+}
+.bracket-vs {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fg-dim);
+  padding: 2px 0;
+  letter-spacing: 0.1em;
+}
+.bracket-score {
+  text-align: center;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--fg);
+  font-family: var(--font-mono, monospace);
+  padding: 6px 0 2px;
+  font-variant-numeric: tabular-nums;
+}
+.bracket-payout-note {
+  text-align: center;
+  font-size: 11px;
+  color: var(--fg-dim);
+  padding-top: 4px;
+}
+.bracket-final-slot .bracket-match {
+  background: linear-gradient(135deg, rgba(38, 161, 123, 0.12), rgba(14, 30, 26, 0.6));
+  border-color: rgba(38, 161, 123, 0.3);
+}
+.trophy-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px 16px;
+}
+.trophy-slot .trophy-icon {
+  font-size: 40px;
+}
+.trophy-slot .champion-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--tether-strong);
+}
+.trophy-slot .champion-hint {
+  font-size: 12px;
+  color: var(--fg-dim);
+  text-align: center;
+}
+
+.bracket-log {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bracket-log-row {
+  display: grid;
+  grid-template-columns: 90px 1fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 10px 14px;
+  background: rgba(14, 30, 26, 0.5);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  opacity: 0;
+  transform: translateY(6px);
+  animation: bracket-row-in 300ms forwards ease-out;
+}
+@keyframes bracket-row-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+.bracket-log-row .stage { color: var(--fg-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+.bracket-log-row .body { color: var(--fg); }
+.bracket-log-row .body strong { color: var(--tether-strong); }
+.bracket-log-row .mult {
+  padding: 4px 10px;
+  font-family: var(--font-mono, monospace);
+  font-weight: 600;
+  color: var(--tether-strong);
+  background: rgba(38, 161, 123, 0.14);
+  border-radius: 999px;
+}
+
+.bracket-summary {
+  padding: 18px 20px;
+  background: rgba(8, 19, 15, 0.55);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.bracket-summary-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 12px;
+}
+.bracket-summary-table {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto auto auto auto;
+  gap: 8px 20px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.bracket-summary-table .head {
+  font-size: 11px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.bracket-summary-table .cell {
+  padding: 4px 0;
+  font-family: var(--font-mono, monospace);
+}
+.bracket-summary-table .cell.team {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-sans, sans-serif);
+}
+.bracket-summary-table .cell.team img { width: 16px; height: auto; border-radius: 2px; }
+.bracket-summary-table .cell.pos { color: var(--tether-strong); font-weight: 600; }
+.bracket-summary-table .cell.neg { color: #ff8087; font-weight: 600; }
+
 .score-pair-field .score-pair-inputs {
   display: grid;
   grid-template-columns: 1fr auto 1fr;

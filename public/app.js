@@ -1815,6 +1815,245 @@ function describeEvent (e) {
   }
 }
 
+/* ─── Bracket tournament demo ───
+ *
+ * Pure client-side simulation of a 4-team knockout bracket with pre-locked
+ * stakes and per-match redistribution of the loser's pool to the winner's
+ * bettors. No on-chain tx: this is a demonstration of the composed
+ * primitive (the on-chain BracketMarket contract is on the roadmap).
+ *
+ * Payout model:
+ *   - Bettors lock USDt on one team before the tournament starts.
+ *   - Each match, the loser's pool is redistributed to the winner's
+ *     bettors proportional to their stake share within the winning team.
+ *   - Stake stays AT RISK until the bettor's team is eliminated (lose
+ *     stake, keep prior match winnings) or lifts the trophy (get stake
+ *     back plus all accumulated match winnings).
+ *
+ * This model rewards backing a mid-tier team that wins at least one
+ * match, because a semifinal victory can pay enough to break even even
+ * if the team loses the final. That's the pitch: "bet on a good ranking,
+ * not just the champion."
+ */
+
+const BRACKET_TEAMS = {
+  france:    { id: 'france',    name: 'France',    iso: 'fr', stake: 500, bettors: 10 },
+  brazil:    { id: 'brazil',    name: 'Brazil',    iso: 'br', stake: 300, bettors: 5 },
+  argentina: { id: 'argentina', name: 'Argentina', iso: 'ar', stake: 400, bettors: 8 },
+  germany:   { id: 'germany',   name: 'Germany',   iso: 'de', stake: 200, bettors: 4 },
+}
+
+const BRACKET_MATCHES = [
+  { stage: 'Semifinal 1', home: 'france',    away: 'brazil',  winner: 'france',    score: [2, 1] },
+  { stage: 'Semifinal 2', home: 'argentina', away: 'germany', winner: 'argentina', score: [3, 0] },
+  { stage: 'Final',       home: 'france',    away: 'argentina', winner: 'france',  score: [1, 0] },
+]
+
+let BRACKET_STATE = null
+
+function renderBracket () {
+  const board = $('#bracket-board')
+  if (!board) return
+  const s = BRACKET_STATE
+  const cell = (id, klass = '') => {
+    const t = BRACKET_TEAMS[id]
+    return `
+      <div class="bracket-team ${klass}">
+        <span class="team-info">
+          <img src="${FLAG_CDN(t.iso)}" alt="" />
+          <span class="name">${t.name}</span>
+        </span>
+        <span class="team-pool">${fmtUsdt(s.pools[id])}</span>
+      </div>
+    `
+  }
+  const matchBlock = (m, isLive, isSettled, showScore) => {
+    const home = m.home, away = m.away, winner = m.winner
+    const homeCls = isSettled ? (winner === home ? 'winner' : 'loser') : ''
+    const awayCls = isSettled ? (winner === away ? 'winner' : 'loser') : ''
+    const scoreLine = showScore ? `<div class="bracket-score">${m.score[0]} - ${m.score[1]}</div>` : ''
+    const payoutLine = isSettled ? `<div class="bracket-payout-note">Loser pool → ${BRACKET_TEAMS[winner].name} bettors</div>` : ''
+    return `
+      <div class="bracket-match ${isLive ? 'live' : ''} ${isSettled ? 'settled' : ''}" data-stage="${m.stage}">
+        ${cell(home, homeCls)}
+        <div class="bracket-vs">vs</div>
+        ${cell(away, awayCls)}
+        ${scoreLine}
+        ${payoutLine}
+      </div>
+    `
+  }
+
+  const semi1 = BRACKET_MATCHES[0]
+  const semi2 = BRACKET_MATCHES[1]
+  const final = BRACKET_MATCHES[2]
+  const playedCount = s.playedCount
+
+  const semi1State = playedCount > 0 ? 'settled' : (s.liveMatch === 0 ? 'live' : 'pending')
+  const semi2State = playedCount > 1 ? 'settled' : (s.liveMatch === 1 ? 'live' : 'pending')
+  const finalState = playedCount > 2 ? 'settled' : (s.liveMatch === 2 ? 'live' : 'pending')
+
+  const finalHTML = playedCount >= 2
+    ? matchBlock(final, finalState === 'live', finalState === 'settled', playedCount >= 3)
+    : `<div class="bracket-match" style="opacity:0.4;">
+        <div class="bracket-team"><span class="team-info"><span class="name">Winner semi 1</span></span></div>
+        <div class="bracket-vs">vs</div>
+        <div class="bracket-team"><span class="team-info"><span class="name">Winner semi 2</span></span></div>
+      </div>`
+
+  const trophyHTML = playedCount >= 3
+    ? `
+      <div class="trophy-slot">
+        <div class="trophy-icon">🏆</div>
+        <div class="champion-name">${BRACKET_TEAMS[final.winner].name}</div>
+        <div class="champion-hint">Champion, ${BRACKET_TEAMS[final.winner].name} bettors keep their stake</div>
+      </div>
+    `
+    : `
+      <div class="trophy-slot" style="opacity:0.4;">
+        <div class="trophy-icon">🏆</div>
+        <div class="champion-name">Champion</div>
+        <div class="champion-hint">TBD</div>
+      </div>
+    `
+
+  board.innerHTML = `
+    <div class="bracket-col">
+      <div class="bracket-col-title">Semifinals</div>
+      ${matchBlock(semi1, semi1State === 'live', semi1State === 'settled', playedCount >= 1)}
+      ${matchBlock(semi2, semi2State === 'live', semi2State === 'settled', playedCount >= 2)}
+    </div>
+    <div class="bracket-col bracket-final-slot">
+      <div class="bracket-col-title">Final</div>
+      ${finalHTML}
+    </div>
+    <div class="bracket-col">
+      <div class="bracket-col-title">Champion</div>
+      ${trophyHTML}
+    </div>
+  `
+}
+
+function resetBracket () {
+  BRACKET_STATE = {
+    pools: Object.fromEntries(Object.entries(BRACKET_TEAMS).map(([id, t]) => [id, t.stake])),
+    perTeamEarnings: Object.fromEntries(Object.keys(BRACKET_TEAMS).map(id => [id, 0])),
+    perTeamAlive: Object.fromEntries(Object.keys(BRACKET_TEAMS).map(id => [id, true])),
+    playedCount: 0,
+    liveMatch: null,
+    log: [],
+  }
+  $('#bracket-status').textContent = 'Pre-tournament, bets open.'
+  $('#bracket-log').innerHTML = ''
+  $('#bracket-summary').hidden = true
+  $('#bracket-run').disabled = false
+  renderBracket()
+}
+
+async function playBracketMatch (matchIndex) {
+  const m = BRACKET_MATCHES[matchIndex]
+  BRACKET_STATE.liveMatch = matchIndex
+  $('#bracket-status').textContent = `Playing ${m.stage}...`
+  renderBracket()
+  await new Promise(r => setTimeout(r, 1600))
+
+  const winnerId = m.winner
+  const loserId = m.winner === m.home ? m.away : m.home
+  const winnerPoolPreMatch = BRACKET_TEAMS[winnerId].stake // baseline stake pool of the winner's bettors
+  const loserPoolTransferred = BRACKET_STATE.pools[loserId]
+
+  // Payout: the loser pool goes to the winner's bettors, distributed
+  // proportionally to their stake share within the winner team. The
+  // WINNER team's own pool stays "at risk" for future matches.
+  BRACKET_STATE.perTeamEarnings[winnerId] += loserPoolTransferred
+  BRACKET_STATE.pools[loserId] = 0
+  BRACKET_STATE.perTeamAlive[loserId] = false
+
+  BRACKET_STATE.playedCount += 1
+  BRACKET_STATE.liveMatch = null
+
+  const multiplier = 1 + (loserPoolTransferred / winnerPoolPreMatch)
+  BRACKET_STATE.log.push({
+    stage: m.stage,
+    winnerName: BRACKET_TEAMS[winnerId].name,
+    loserName: BRACKET_TEAMS[loserId].name,
+    score: `${m.score[0]}-${m.score[1]}`,
+    transferred: loserPoolTransferred,
+    winnerPool: winnerPoolPreMatch,
+    multiplier,
+  })
+  renderBracket()
+  renderBracketLog()
+  await new Promise(r => setTimeout(r, 900))
+}
+
+function renderBracketLog () {
+  const root = $('#bracket-log')
+  root.innerHTML = BRACKET_STATE.log.map((l, i) => `
+    <div class="bracket-log-row" style="animation-delay:${i * 60}ms">
+      <span class="stage">${l.stage}</span>
+      <span class="body"><strong>${l.winnerName}</strong> beat ${l.loserName} <span class="mono">${l.score}</span>. ${fmtUsdt(l.transferred)} redistributed to ${l.winnerName} bettors (pool ${fmtUsdt(l.winnerPool)}).</span>
+      <span class="mult">×${l.multiplier.toFixed(2)}</span>
+    </div>
+  `).join('')
+}
+
+function renderBracketSummary () {
+  const totalStakes = Object.values(BRACKET_TEAMS).reduce((a, t) => a + t.stake, 0)
+  const champion = BRACKET_MATCHES[2].winner
+
+  const rows = Object.values(BRACKET_TEAMS).map(t => {
+    const isChampion = t.id === champion
+    const stake = t.stake
+    const earnings = BRACKET_STATE.perTeamEarnings[t.id]
+    // A team pool is refunded ONLY to the champion's bettors. Any other
+    // team's bettors lose their stake at the moment their team is
+    // eliminated, but keep their prior match earnings.
+    const stakeRefund = isChampion ? stake : 0
+    const totalReceived = earnings + stakeRefund
+    const net = totalReceived - stake
+    const roiPct = (net / stake) * 100
+    return { team: t, stake, earnings, stakeRefund, totalReceived, net, roiPct, isChampion }
+  })
+
+  const cellClass = n => n > 0 ? 'pos' : n < 0 ? 'neg' : ''
+  const summary = $('#bracket-summary')
+  summary.innerHTML = `
+    <div class="bracket-summary-title">Final tally, ${fmtUsdt(totalStakes)} total staked, ${fmtUsdt(totalStakes)} redistributed</div>
+    <div class="bracket-summary-table">
+      <div class="head">Team bettors</div>
+      <div class="head">Stake</div>
+      <div class="head">Match wins</div>
+      <div class="head">Stake refund</div>
+      <div class="head">Net</div>
+      ${rows.map(r => `
+        <div class="cell team">
+          <img src="${FLAG_CDN(r.team.iso)}" alt="" />
+          <span>${r.team.name}${r.isChampion ? ' 🏆' : ''}</span>
+        </div>
+        <div class="cell">${fmtUsdt(r.stake)}</div>
+        <div class="cell">+${fmtUsdt(r.earnings)}</div>
+        <div class="cell">${r.stakeRefund > 0 ? '+' + fmtUsdt(r.stakeRefund) : '-'}</div>
+        <div class="cell ${cellClass(r.net)}">${r.net >= 0 ? '+' : ''}${fmtUsdt(r.net)} (${r.roiPct >= 0 ? '+' : ''}${r.roiPct.toFixed(0)}%)</div>
+      `).join('')}
+    </div>
+  `
+  summary.hidden = false
+}
+
+async function runBracketDemo () {
+  const btn = $('#bracket-run')
+  btn.disabled = true
+  resetBracket()
+  await new Promise(r => setTimeout(r, 400))
+  for (let i = 0; i < BRACKET_MATCHES.length; i++) {
+    await playBracketMatch(i)
+  }
+  $('#bracket-status').textContent = 'Tournament settled.'
+  renderBracketSummary()
+  btn.disabled = false
+}
+
 /* ─── Bootstrapping ─── */
 async function loadTeams () {
   const { teams } = await api('/api/teams')
@@ -1887,6 +2126,8 @@ document.addEventListener('keydown', e => {
 })
 
 $('#tip-btn').addEventListener('click', submitTip)
+$('#bracket-run')?.addEventListener('click', runBracketDemo)
+$('#bracket-reset')?.addEventListener('click', () => resetBracket())
 $$('[data-tip-mode]').forEach(b => b.addEventListener('click', () => setTipMode(b.dataset.tipMode)))
 $('#pool-create-btn').addEventListener('click', submitPool)
 
@@ -1983,6 +2224,7 @@ async function boot () {
     el.classList.add('online')
   })
   await Promise.allSettled([refreshStats(), refreshMarkets(), refreshPools(), refreshJournal()])
+  resetBracket()
   showConnectView()
   // Silently rehydrate the wallet if this browser was previously connected.
   // Fires after render so a slow MetaMask does not delay the initial paint.

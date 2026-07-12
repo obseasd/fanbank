@@ -24,7 +24,7 @@
   <link rel="icon" href="/public/logo.png" type="image/png" />
   <link rel="apple-touch-icon" href="/public/logo.png" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/public/style.css?v=8" />
+  <link rel="stylesheet" href="/public/style.css?v=9" />
   <!-- ethers UMD for client-side signing via injected wallet -->
   <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
 </head>
@@ -44,6 +44,7 @@
       <a href="#how">How it works</a>
       <a href="#teams">Play</a>
       <a href="#markets">Markets</a>
+      <a href="#bracket">Bracket</a>
       <a href="#audit">Audit</a>
     </nav>
     <button id="wallet-pill" class="wallet-pill" type="button">
@@ -300,6 +301,28 @@
     <div class="markets" id="markets-list"></div>
   </section>
 
+  <!-- ─── BRACKET TOURNAMENT DEMO ─── -->
+  <section id="bracket" class="panels">
+    <div class="section-head">
+      <span class="section-eyebrow">Compose</span>
+      <h2>Tournament bracket, all-or-nothing knockout.</h2>
+      <p>Fans lock a USDt stake on the team they back <strong>before</strong> the tournament starts. Each match, the loser's pool is redistributed to the winner's bettors proportional to their stake share. Your stake stays at risk until your team is eliminated or lifts the trophy. Bet on the champion for the full multiplier, or on a mid-tier team who wins a match or two and break even without the trophy.</p>
+    </div>
+    <div class="bracket-demo">
+      <div class="bracket-demo-toolbar">
+        <button id="bracket-run" type="button" class="btn primary">
+          <span>Run bracket demo</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        </button>
+        <button id="bracket-reset" type="button" class="btn ghost">Reset</button>
+        <div class="bracket-status" id="bracket-status">Pre-tournament, bets open.</div>
+      </div>
+      <div class="bracket-board" id="bracket-board"></div>
+      <div class="bracket-log" id="bracket-log"></div>
+      <div class="bracket-summary" id="bracket-summary" hidden></div>
+    </div>
+  </section>
+
   <!-- ─── JOURNAL ─── -->
   <section id="audit" class="panels">
     <div class="section-head">
@@ -430,6 +453,6 @@
   <!-- ─── TOAST HOST ─── -->
   <div id="toasts" class="toast-host"></div>
 
-  <script src="/public/app.js?v=8"></script>
+  <script src="/public/app.js?v=9"></script>
 </body>
 </html>
