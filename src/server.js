@@ -186,6 +186,51 @@ app.get('/api/wallet', async (_req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+/// Smart Account (WDK ERC-4337) surface. Boots lazily on first request
+/// so the server does not require a bundler URL to start. Returns the
+/// smart account address, its USDt balance, and the underlying EOA
+/// address so the UI can render both paths side by side.
+let smartAccount = null
+let smartAccountError = null
+async function ensureSmartAccount () {
+  if (smartAccount || smartAccountError) return
+  try {
+    const mod = await import('./wdk/smart-account.js')
+    smartAccount = await mod.createFanBankSmartAccount()
+    console.log(`[fanbank] smart account ready ${smartAccount.address}`)
+  } catch (e) {
+    smartAccountError = e
+    console.warn('[fanbank] smart account not available:', e.message)
+  }
+}
+app.get('/api/smart-account', async (_req, res) => {
+  await ensureSmartAccount()
+  if (smartAccountError) {
+    return res.status(503).json({
+      available: false,
+      error: smartAccountError.message,
+      hint: 'Set ERC4337_BUNDLER_URL in .env to enable the smart account path.',
+    })
+  }
+  try {
+    const [usdt] = await Promise.all([smartAccount.getUsdtBalance()])
+    res.json({ available: true, usdt, ...smartAccount.getInfo() })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+app.post('/api/smart-account/tip-team', txLimit, async (req, res) => {
+  await ensureSmartAccount()
+  if (smartAccountError) return res.status(503).json({ error: 'smart account unavailable' })
+  try {
+    const { teamId, amount } = req.body ?? {}
+    const team = (await import('./fan/teams.js')).getTeam(teamId)
+    if (!team) throw new Error(`unknown team: ${teamId}`)
+    if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) throw new Error('amount must be positive')
+    const receipt = await smartAccount.transferUsdt(team.tipAddress, Number(amount))
+    res.json({ ok: true, mode: 'erc4337', receipt })
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+
 // ─── State-changing (require wallet) ───
 
 app.post('/api/tip/team', txLimit, async (req, res) => {
