@@ -369,6 +369,61 @@ async function ensureConnected () {
   throw new Error('Please connect a wallet first')
 }
 
+/// Verify the injected wallet is still on the FanBank chain, and prompt
+/// to switch if not. Users often flip chains between sessions (or a wallet
+/// resets after a browser restart). Without this guard, an approve() on
+/// mainnet would silently drain gas for nothing.
+async function ensureCorrectChain () {
+  if (CONNECTED?.mode !== 'external') return
+  const net = await CONNECTED.provider.getNetwork()
+  if (Number(net.chainId) === CONFIG.chainId) return
+  toast({ level: 'err', title: 'Wrong network', desc: `Switch your wallet to ${CONFIG.chainName || 'the configured chain'} and try again.` })
+  try {
+    await CONNECTED.provider.send('wallet_switchEthereumChain', [{ chainId: '0x' + CONFIG.chainId.toString(16) }])
+  } catch (e) {
+    throw new Error(`Please switch your wallet to ${CONFIG.chainName || 'chainId ' + CONFIG.chainId}.`)
+  }
+  await new Promise(r => setTimeout(r, 400))
+  const after = await CONNECTED.provider.getNetwork()
+  if (Number(after.chainId) !== CONFIG.chainId) throw new Error('Network switch not confirmed')
+}
+
+/// Preflight balance check before a tx that spends USDt. Returns a
+/// short human string when the wallet lacks USDt or gas, so we can
+/// surface a helpful toast BEFORE bothering the wallet with a signature
+/// request that would just fail.
+function preflightSpend (amount) {
+  if (CONNECTED?.mode !== 'external') return null
+  const usdt = Number(CONNECTED.usdt || 0)
+  const gas = Number(CONNECTED.gas || 0)
+  if (amount > usdt) return `You have ${fmtUsdt(usdt)}. Mint some test USDt from your wallet card.`
+  if (gas <= 0) return `You have no ${CONFIG.chainName || 'network'} ETH for gas. Grab some from a Sepolia faucet.`
+  return null
+}
+
+/// Convert an ethers or wallet error into a human sentence. Covers the
+/// common cases (user rejection, insufficient funds, RPC rate limits,
+/// contract reverts) without leaking stack traces into the toast body.
+function friendlyError (e) {
+  const raw = e?.shortMessage || e?.reason || e?.message || String(e || 'Unknown error')
+  const code = e?.code || e?.info?.error?.code
+  if (code === 'ACTION_REJECTED' || code === 4001 || /user (rejected|denied|cancel)/i.test(raw)) {
+    return 'You cancelled the signature.'
+  }
+  if (code === 'INSUFFICIENT_FUNDS' || /insufficient funds/i.test(raw)) {
+    return 'Not enough ETH for gas. Top up on a Sepolia faucet.'
+  }
+  if (/nonce too low|replacement transaction underpriced/i.test(raw)) {
+    return 'A previous tx is still pending. Wait a few seconds and retry.'
+  }
+  if (/execution reverted:?\s*(.*)/i.test(raw)) {
+    const m = raw.match(/execution reverted:?\s*(.*)/i)
+    return `Contract reverted${m[1] ? ': ' + m[1].slice(0, 120) : ''}`
+  }
+  if (/network|fetch|rpc/i.test(raw)) return 'Network error. Check your connection and retry.'
+  return String(raw).slice(0, 180)
+}
+
 /* ─── Generic modal ─────────────────────────────────────────────────
  *
  * Reusable dialog that replaces prompt() and confirm() everywhere.
@@ -827,8 +882,11 @@ async function submitTip () {
   try {
     await ensureConnected()
     const team = TEAMS.find(t => t.id === teamId)
+    const shortage = preflightSpend(amount)
+    if (shortage) throw new Error(shortage)
     let receipt
     if (CONNECTED.mode === 'external') {
+      await ensureCorrectChain()
       hint.textContent = 'Signing tip via FanTipRouter…'
       const res = await clientTipTeam(teamId, amount)
       hint.textContent = `Tx sent, confirming…`
@@ -857,9 +915,10 @@ async function submitTip () {
     $('#tip-amount').value = ''
     await Promise.all([refreshConnectedBalances(), refreshStats(), refreshJournal()])
   } catch (e) {
+    const msg = friendlyError(e)
     hint.className = 'hint err'
-    hint.textContent = e.message
-    toast({ level: 'err', title: 'Tip failed', desc: e.message })
+    hint.textContent = msg
+    toast({ level: 'err', title: 'Tip failed', desc: msg })
   } finally {
     btn.disabled = false
   }
@@ -957,7 +1016,10 @@ async function refreshPools () {
         contributors: p.contributors.size,
       }))
     const root = $('#pools-list')
-    if (!pools.length) { root.innerHTML = ''; return }
+    if (!pools.length) {
+      root.innerHTML = `<div class="empty-state"><div class="empty-icon">🏦</div><div class="empty-title">No pools yet</div><div class="empty-desc">Open one above for a watch-party, a shared gift for a player, or a savings club.</div></div>`
+      return
+    }
     root.innerHTML = pools.map(p => {
       const team = TEAMS.find(t => t.id === p.teamId)
       return `
@@ -1000,8 +1062,11 @@ async function contributeToPool (poolId) {
   const amount = Number(values.amount)
   try {
     await ensureConnected()
+    const shortage = preflightSpend(amount)
+    if (shortage) throw new Error(shortage)
     let receipt
     if (CONNECTED.mode === 'external') {
+      await ensureCorrectChain()
       receipt = await clientContribute(Number(poolId), amount)
       await api(`/api/pool/${poolId}/contribute/external`, { method: 'POST', body: {
         amount, txHash: receipt.hash, from: receipt.from, to: CONFIG.contracts?.poolManager,
@@ -1022,7 +1087,7 @@ async function contributeToPool (poolId) {
     toast({ level: 'ok', title: `Contributed ${fmtUsdt(amount)}`, txHash: receipt.hash })
     await Promise.all([refreshConnectedBalances(), refreshStats(), refreshPools(), refreshJournal()])
   } catch (e) {
-    toast({ level: 'err', title: 'Contribution failed', desc: e.message })
+    toast({ level: 'err', title: 'Contribution failed', desc: friendlyError(e) })
   }
 }
 
@@ -1051,7 +1116,7 @@ async function payoutPool (poolId) {
     toast({ level: 'ok', title: 'Pool paid out', desc: `${fmtUsdt(totalUsdt)} across ${split.length} recipients` })
     await Promise.all([refreshConnectedBalances(), refreshStats(), refreshPools(), refreshJournal()])
   } catch (e) {
-    toast({ level: 'err', title: 'Payout failed', desc: e.message })
+    toast({ level: 'err', title: 'Payout failed', desc: friendlyError(e) })
   }
 }
 
@@ -1109,7 +1174,10 @@ async function refreshMarkets () {
       }
     })
     const root = $('#markets-list')
-    if (!markets.length) { root.innerHTML = '<div class="hint">No markets yet.</div>'; return }
+    if (!markets.length) {
+      root.innerHTML = `<div class="empty-state"><div class="empty-icon">⚽</div><div class="empty-title">No matches loaded</div><div class="empty-desc">The schedule endpoint returned no upcoming fixtures. Check /api/matches.</div></div>`
+      return
+    }
     root.innerHTML = markets.map(m => marketRow(m)).join('')
     $$('.odd:not(.disabled)').forEach(el => el.addEventListener('click', () => {
       placeBet(el.dataset.matchId, el.dataset.outcome)
@@ -1192,8 +1260,11 @@ async function placeBet (matchId, outcome) {
   const amount = Number(values.amount)
   try {
     await ensureConnected()
+    const shortage = preflightSpend(amount)
+    if (shortage) throw new Error(shortage)
     let receipt
     if (CONNECTED.mode === 'external') {
+      await ensureCorrectChain()
       receipt = await clientPlaceBet(matchId, outcome, amount)
       await api('/api/bet/external', { method: 'POST', body: {
         matchId, outcome, amount, txHash: receipt.hash, from: receipt.from,
@@ -1220,7 +1291,7 @@ async function placeBet (matchId, outcome) {
     toast({ level: 'ok', title: `Bet placed: ${fmtUsdt(amount)} on ${outcomeLabel}`, txHash: receipt.hash })
     await Promise.all([refreshConnectedBalances(), refreshStats(), refreshMarkets(), refreshJournal()])
   } catch (e) {
-    toast({ level: 'err', title: 'Bet failed', desc: e.message })
+    toast({ level: 'err', title: 'Bet failed', desc: friendlyError(e) })
   }
 }
 
@@ -1303,7 +1374,10 @@ async function refreshJournal () {
     )
     const merged = [...filteredEntries, ...pending].sort((a, b) => (b.ts || 0) - (a.ts || 0))
     const root = $('#journal')
-    if (!merged.length) { root.innerHTML = ''; return }
+    if (!merged.length) {
+      root.innerHTML = `<div class="empty-state"><div class="empty-icon">📓</div><div class="empty-title">Journal empty</div><div class="empty-desc">Every tip, pool contribution, and bet lands here with its on-chain tx hash.</div></div>`
+      return
+    }
     root.innerHTML = merged.slice(0, 60).map(e => {
       // Local-only markers (pool creation, other off-chain events cached
       // client-side) carry a synthetic hash like "local:pool:pool_xxx".
@@ -1557,4 +1631,19 @@ async function boot () {
   setInterval(() => { if (CONNECTED) refreshConnectedBalances() }, 30_000)
   setInterval(refreshMarkets, 20_000)
 }
+
+/// Backstop for any promise rejection that a handler forgot to catch.
+/// Without this, an ethers.js network hiccup during a background poll
+/// would surface as a red DevTools error only, and the user would see a
+/// silently frozen counter. A short toast makes the failure visible and
+/// hints at the recovery step.
+window.addEventListener('unhandledrejection', ev => {
+  const msg = friendlyError(ev.reason)
+  console.warn('[fanbank] unhandled rejection:', ev.reason)
+  toast({ level: 'err', title: 'Something went wrong', desc: msg, timeout: 4500 })
+})
+window.addEventListener('error', ev => {
+  if (!ev.error) return
+  console.warn('[fanbank] uncaught error:', ev.error)
+})
 boot()
