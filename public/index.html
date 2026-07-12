@@ -178,9 +178,15 @@
           </span>
         </div>
         <div class="panel-body">
-          <div class="segmented" role="tablist" aria-label="Tip target">
-            <button class="seg-btn active" type="button" role="tab" aria-selected="true" data-tip-mode="team">Team</button>
-            <button class="seg-btn" type="button" role="tab" aria-selected="false" data-tip-mode="player">Player</button>
+          <div class="tip-mode-switch" role="tablist" aria-label="Tip target">
+            <button class="tip-mode-btn active" type="button" role="tab" aria-selected="true" data-tip-mode="team">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><circle cx="17" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg>
+              <span>Team</span>
+            </button>
+            <button class="tip-mode-btn" type="button" role="tab" aria-selected="false" data-tip-mode="player">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <span>Player</span>
+            </button>
           </div>
           <div class="field field-team">
             <label>Team</label>

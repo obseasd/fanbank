@@ -19,6 +19,8 @@ const ERC20_ABI = [
   'function balanceOf(address) view returns (uint256)',
   'function decimals() view returns (uint8)',
   'function transfer(address to, uint256 amount) returns (bool)',
+  'function approve(address spender, uint256 amount) returns (bool)',
+  'function allowance(address owner, address spender) view returns (uint256)',
 ]
 
 // Lazily read window.ethers each access so a slow UMD load does not
@@ -113,11 +115,16 @@ function loadHiddenPools () {
     return new Set(Array.isArray(arr) ? arr : [])
   } catch { return new Set() }
 }
+/// Hide a pool from the local view. Pool IDs arrive from three sources
+/// (server journal number, local optimistic string, dataset attribute
+/// string) so we normalize to string on both write and read; otherwise
+/// Set.has(1) !== Set.has("1") and the pool re-appears on refresh.
 function hidePool (poolId) {
+  const key = String(poolId)
   const blocked = loadHiddenPools()
-  blocked.add(poolId)
+  blocked.add(key)
   try { localStorage.setItem(HIDDEN_POOLS_KEY, JSON.stringify([...blocked])) } catch {}
-  const kept = loadClientEvents().filter(e => e.poolId !== poolId)
+  const kept = loadClientEvents().filter(e => String(e.poolId) !== key)
   try { localStorage.setItem(CLIENT_JOURNAL_KEY, JSON.stringify(kept)) } catch {}
 }
 
@@ -206,7 +213,22 @@ async function connectInjected () {
 
   // Update UI state
   eth.on?.('accountsChanged', handleAccountsChanged)
-  eth.on?.('chainChanged', () => location.reload())
+  // Soft chain-change handler: refresh balances + warn on wrong chain,
+  // but do NOT reload the page. A full reload drops the session and
+  // makes wallet switching feel broken (the user wanted to change
+  // networks, not sign out). If they land on the wrong chain, the next
+  // tx attempt will trip the chain guard and prompt a switch back.
+  eth.on?.('chainChanged', async () => {
+    if (!CONNECTED?.provider) return
+    try {
+      const net = await CONNECTED.provider.getNetwork()
+      const onRightChain = Number(net.chainId) === CONFIG.chainId
+      if (!onRightChain) {
+        toast({ level: 'err', title: 'Wrong network', desc: `Switch to ${CONFIG.chainName || 'Base Sepolia'} for tx to work.`, timeout: 4000 })
+      }
+      await refreshConnectedBalances().catch(() => {})
+    } catch { /* ignore */ }
+  })
   // Remember that this browser has been connected before, so the next
   // page load can silently reconnect via eth_accounts without popping
   // MetaMask again.
@@ -562,6 +584,11 @@ async function openModal ({ title, description, fields = [], submit = 'Confirm',
   body.innerHTML = fields.map((f, i) => _fieldToHTML(f, i)).join('')
   submitBtn.textContent = submit
   cancelBtn.textContent = cancel
+  // Hide the submit button when the caller passes an empty submit label:
+  // some modals are read-only (details view) and having two identical
+  // "Close" buttons is a UX smell. Cancel remains the single close path.
+  submitBtn.hidden = !submit
+  submitBtn.style.display = submit ? '' : 'none'
 
   _lastFocusedBeforeModal = document.activeElement
   root.hidden = false
@@ -572,9 +599,12 @@ async function openModal ({ title, description, fields = [], submit = 'Confirm',
   body.addEventListener('input', revalidate)
   body.addEventListener('change', revalidate)
 
-  // Focus first control (input/select) or fall back to the submit button
-  // for confirm-only dialogs like payout preview.
-  const firstControl = body.querySelector('input:not([disabled]), select:not([disabled]), textarea:not([disabled])') || submitBtn
+  // Focus first control (input/select) or fall back to the primary
+  // action button. When submit is hidden (read-only view) we focus
+  // Cancel instead so Esc/Enter still works and no dead focus lands
+  // on a display:none button.
+  const firstControl = body.querySelector('input:not([disabled]), select:not([disabled]), textarea:not([disabled])')
+    || (submit ? submitBtn : cancelBtn)
   setTimeout(() => { try { firstControl.focus() } catch {} }, 30)
 
   return new Promise(resolve => {
@@ -609,8 +639,9 @@ async function openModal ({ title, description, fields = [], submit = 'Confirm',
         return
       }
       if (e.key === 'Enter' && document.activeElement && document.activeElement.tagName !== 'TEXTAREA' && document.activeElement.tagName !== 'SELECT') {
-        // Enter submits the form when valid.
-        if (!submitBtn.disabled) {
+        // Enter submits the form when valid. Skip when submit is hidden
+        // (read-only modal): the only interactive action is Close.
+        if (submit && !submitBtn.disabled) {
           e.preventDefault()
           onSubmit()
         }
@@ -982,6 +1013,8 @@ function setTipMode (mode) {
   })
   const playerField = $('.field-player')
   if (playerField) playerField.hidden = TIP_MODE !== 'player'
+  const hint = $('#tip-hint')
+  if (hint) { hint.className = 'hint'; hint.textContent = '' }
   if (TIP_MODE === 'player') refreshTipPlayerDD()
 }
 
@@ -1071,7 +1104,7 @@ async function refreshPools () {
     }
     const hidden = loadHiddenPools()
     const pools = [...poolsMap.values()]
-      .filter(p => !hidden.has(p.poolId))
+      .filter(p => !hidden.has(String(p.poolId)))
       .map(p => ({
         ...p,
         contributors: p.contributors.size,
@@ -1086,7 +1119,12 @@ async function refreshPools () {
       return `
         <div class="pool-row">
           <div>
-            <div class="pool-title">${p.purpose || '(no purpose)'}</div>
+            <div class="pool-title-line">
+              <span class="pool-title">${p.purpose || '(no purpose)'}</span>
+              <button class="pool-delete-inline" data-delete="${p.poolId}" aria-label="Remove pool from view" title="Remove pool from view">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+              </button>
+            </div>
             <div class="pool-meta">${team ? team.name + ' · ' : ''}${p.policy} · ${p.contributors} contributors</div>
           </div>
           <div class="pool-total">${fmtUsdt(p.totalUsdt)}</div>
@@ -1101,6 +1139,11 @@ async function refreshPools () {
     $$('button[data-contribute]').forEach(b => b.addEventListener('click', () => contributeToPool(b.dataset.contribute)))
     $$('button[data-payout]').forEach(b => b.addEventListener('click', () => payoutPool(b.dataset.payout)))
     $$('button[data-details]').forEach(b => b.addEventListener('click', () => openPoolDetails(b.dataset.details)))
+    $$('button[data-delete]').forEach(b => b.addEventListener('click', () => {
+      hidePool(b.dataset.delete)
+      toast({ level: 'ok', title: 'Pool removed from view', desc: 'On-chain contributions still verifiable on Basescan.' })
+      refreshPools().catch(() => {})
+    }))
   } catch (e) {
     toast({ level: 'err', title: 'Pool list failed', desc: e.message })
   }
@@ -1155,59 +1198,85 @@ async function openPoolDetails (poolId) {
     : '-'
 
   const contributionsHTML = contributions.length
-    ? contributions.map(c => `
-        <div class="generic-modal-preview-row">
-          <span class="to">${linkAddr(c.from)} · ${timeAgo(c.ts)}</span>
-          <span class="amount">${fmtUsdt(c.amount)}</span>
+    ? `<div class="pool-timeline">${contributions.map(c => `
+        <div class="pool-timeline-row">
+          <span class="who">${linkAddr(c.from)}<span class="ts">${timeAgo(c.ts)}</span></span>
+          <span class="amt">+${fmtUsdt(c.amount)}</span>
         </div>
-      `).join('')
-    : '<div class="hint">No contributions yet.</div>'
+      `).join('')}</div>`
+    : '<div class="pool-empty-row">No contributions yet.</div>'
 
   const payoutsHTML = payouts.length
-    ? payouts.map(p => `
-        <div class="generic-modal-preview-row">
-          <span class="to">${p.type === 'pool-settled' ? `settled · ${p.policy}` : linkAddr(p.to)} · ${timeAgo(p.ts)}</span>
-          <span class="amount">${p.type === 'pool-settled' ? `${p.payouts || 0} recipients` : fmtUsdt(p.amount)}</span>
+    ? `<div class="pool-timeline">${payouts.map(p => `
+        <div class="pool-timeline-row">
+          <span class="who">${p.type === 'pool-settled' ? `Settled via ${p.policy}` : linkAddr(p.to)}<span class="ts">${timeAgo(p.ts)}</span></span>
+          <span class="amt">${p.type === 'pool-settled' ? `${p.payouts || 0} recipients` : fmtUsdt(p.amount)}</span>
         </div>
-      `).join('')
-    : '<div class="hint">No payout yet.</div>'
+      `).join('')}</div>`
+    : '<div class="pool-empty-row">No payout yet.</div>'
+
+  const purposeLabel = onChain?.purpose || created?.purpose || `#${numeric}`
+  const statusLabel = onChain?.settled ? 'Settled' : 'Open'
+  const statusClass = onChain?.settled ? 'settled' : 'open'
 
   const detailsHTML = `
-    <dl class="pool-details-grid">
-      <dt>Pool ID</dt><dd>#${numeric}</dd>
-      <dt>Purpose</dt><dd>${onChain?.purpose || created?.purpose || '(unknown)'}</dd>
-      <dt>Team</dt><dd>${team ? team.name : (onChain?.teamId || 'None')}</dd>
-      <dt>Policy</dt><dd>${onChain?.policy || created?.policy || '?'}</dd>
-      <dt>Total pooled</dt><dd>${fmtUsdt(onChain?.totalUsdt ?? 0)}</dd>
-      <dt>Contributors</dt><dd>${new Set(contributions.map(c => c.from).filter(Boolean)).size}</dd>
-      <dt>Creator</dt><dd>${linkAddr(onChain?.creator)}</dd>
-      <dt>Created</dt><dd>${fmtDate(created?.ts)}</dd>
-      <dt>Payout deadline</dt><dd>${payoutTimeLabel}</dd>
-      <dt>Status</dt><dd>${onChain?.settled ? 'Settled' : 'Open'}</dd>
-    </dl>
-    <div>
-      <div class="generic-modal-title" style="font-size:13px;margin-top:14px;">Contributions</div>
-      ${contributionsHTML}
-    </div>
-    <div>
-      <div class="generic-modal-title" style="font-size:13px;margin-top:14px;">Payouts</div>
-      ${payoutsHTML}
+    <div class="pool-details">
+      <div class="pool-details-header">
+        <div class="pool-title-block">
+          <div class="title">${purposeLabel}</div>
+          <div class="subtitle">Pool #${numeric} · ${onChain?.policy || created?.policy || '?'}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+          <span class="status-pill ${statusClass}">${statusLabel}</span>
+          <button type="button" class="btn-danger-inline" data-pool-remove="${_escapeAttr(String(poolId))}" title="Remove pool from view">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg>
+            Remove
+          </button>
+        </div>
+      </div>
+
+      <dl class="pool-details-grid">
+        <dt>Team</dt><dd>${team ? team.name : (onChain?.teamId || 'None')}</dd>
+        <dt>Total pooled</dt><dd>${fmtUsdt(onChain?.totalUsdt ?? 0)}</dd>
+        <dt>Contributors</dt><dd>${new Set(contributions.map(c => c.from).filter(Boolean)).size}</dd>
+        <dt>Creator</dt><dd>${linkAddr(onChain?.creator)}</dd>
+        <dt>Created</dt><dd>${fmtDate(created?.ts)}</dd>
+        <dt>Payout deadline</dt><dd>${payoutTimeLabel}</dd>
+      </dl>
+
+      <div class="pool-section">
+        <div class="pool-section-title">Contributions</div>
+        ${contributionsHTML}
+      </div>
+      <div class="pool-section">
+        <div class="pool-section-title">Payouts</div>
+        ${payoutsHTML}
+      </div>
     </div>
   `
 
-  const values = await openModal({
-    title: `Pool "${onChain?.purpose || created?.purpose || '#' + numeric}"`,
-    description: 'Full on-chain state + audit trail for this pool.',
+  // Wire the inline red Remove button on the next microtask, once the
+  // modal body has been written to the DOM by openModal.
+  queueMicrotask(() => {
+    const removeBtn = document.querySelector('#generic-modal [data-pool-remove]')
+    if (!removeBtn) return
+    removeBtn.addEventListener('click', () => {
+      hidePool(removeBtn.dataset.poolRemove)
+      toast({ level: 'ok', title: 'Pool removed from view', desc: 'On-chain contributions still verifiable on Basescan.' })
+      refreshPools().catch(() => {})
+      _genericModalCancel?.()
+    })
+  })
+
+  await openModal({
+    title: 'Pool details',
+    description: 'Full on-chain state and audit trail for this pool.',
     fields: [
       { name: '_pool_details', type: 'preview', html: detailsHTML },
     ],
-    submit: 'Remove pool from view',
+    submit: '',
     cancel: 'Close',
   })
-  if (!values) return
-  hidePool(poolId)
-  toast({ level: 'ok', title: 'Pool removed from view', desc: 'On-chain contributions still verifiable on Basescan.' })
-  refreshPools().catch(() => {})
 }
 
 async function contributeToPool (poolId) {
