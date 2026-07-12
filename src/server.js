@@ -194,6 +194,33 @@ app.get('/api/wallet', async (_req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+/// BTC wallet surface. Derives a Bitcoin BIP-84 Native SegWit address
+/// from the SAME seed used for the EVM path via @tetherto/wdk-wallet-btc,
+/// then returns the address + best-effort confirmed balance via a
+/// public Blockbook endpoint. This is the "one seed, every chain" WDK
+/// promise made concrete for a fan who wants to hold BTC alongside USDt.
+let btcWallet = null
+let btcWalletError = null
+async function ensureBtcWallet () {
+  if (btcWallet || btcWalletError) return
+  try {
+    const mod = await import('./wdk/btc-wallet.js')
+    btcWallet = await mod.createFanBtcWallet()
+    console.log(`[fanbank] btc wallet ready ${btcWallet.address}`)
+  } catch (e) {
+    btcWalletError = e
+    console.warn('[fanbank] btc wallet not available:', e.message)
+  }
+}
+app.get('/api/btc', async (_req, res) => {
+  await ensureBtcWallet()
+  if (btcWalletError) return res.status(503).json({ available: false, error: btcWalletError.message })
+  try {
+    const balance = await btcWallet.getBalance()
+    res.json({ available: true, balance, ...btcWallet.getInfo() })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 /// Smart Account (WDK ERC-4337) surface. Boots lazily on first request
 /// so the server does not require a bundler URL to start. Returns the
 /// smart account address, its USDt balance, and the underlying EOA

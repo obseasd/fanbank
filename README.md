@@ -106,9 +106,19 @@ Every module is a real dependency in `package.json`, wired into a code path that
 |---|---|---|
 | [`@tetherto/wdk-wallet-evm`](https://www.npmjs.com/package/@tetherto/wdk-wallet-evm) | `1.0.0-beta.15` | Loads the fan's BIP-39 seed, derives the EOA at `m/44'/60'/0'/0/0`, exposes the ethers signer that every server-side tx (mint, approve, tip, pool contribute, bet) uses. See `src/wdk/wallet.js`. |
 | [`@tetherto/wdk-wallet-evm-erc-4337`](https://www.npmjs.com/package/@tetherto/wdk-wallet-evm-erc-4337) | `1.0.0-beta.11` | Optional smart-account path. Same seed derives a Safe-based ERC-4337 smart account exposed via `/api/smart-account` and `/api/smart-account/tip-team`. When a Pimlico bundler URL is set in `.env`, fans can tip USDt as a sponsored UserOperation without ever holding gas. See `src/wdk/smart-account.js`. |
+| [`@tetherto/wdk-wallet-btc`](https://www.npmjs.com/package/@tetherto/wdk-wallet-btc) | `1.0.0-beta.11` | Derives a Bitcoin BIP-84 Native SegWit address from the SAME seed used for EVM, so a fan carries one recovery phrase and can hold USDt on Base AND BTC on mainnet. Exposed via `/api/btc`. See `src/wdk/btc-wallet.js`. |
 | Ethers.js v6 | `6.16.0` | Bridges the WDK signer into ERC-20 and primitive contract calls. Chosen because ethers is the WDK team's own default and every WDK helper returns raw private keys that ethers wraps cleanly. |
 
-Two WDK modules are the FanBank baseline. LA DOCE (top-2 threat in the round of 16) ships three. Kanshi V3 will add `@tetherto/wdk-secret-manager` for key rotation on the operator wallet.
+**Three WDK modules in the runtime**, wired to concrete endpoints:
+
+```
+seed
+  ├── m/44'/60'/0'/0/0   →  Base Sepolia EOA (0x27986593...)  wdk-wallet-evm
+  ├── ERC-4337 Safe      →  smart account (Pimlico gasless)   wdk-wallet-evm-erc-4337
+  └── m/84'/0'/0'/0/0    →  BTC mainnet (bc1qfef9uwx...)      wdk-wallet-btc
+```
+
+One seed. Three self-custodial paths. Same recovery phrase everywhere. This is the WDK promise the Tether track brief is asking for.
 
 ## End-to-end flow
 
