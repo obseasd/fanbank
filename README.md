@@ -1,6 +1,6 @@
 # FanBank
 
-**Self-custodial fan economy on Tether. Three primitives, three verified contracts on Base Sepolia, three WDK modules in the runtime.**
+**Self-custodial fan economy on Tether. Three primitives, three verified contracts on Base Sepolia, four WDK modules in the runtime.**
 
 Built for the [Tether Developers Cup 2026](https://dorahacks.io/hackathon/tether-developers-cup/detail), WDK track. Advanced to the Round of 16 on July 9 (BUIDL 46855). Semifinal deadline July 12 23:59 GMT-7.
 
@@ -50,6 +50,7 @@ Every FanBank primitive lands on chain. One click on any hash below opens the tx
 | Deploy FanPoolManager | [`0xC773...840b52`](https://sepolia.basescan.org/address/0x0945c05D14632c4387210357819A3f0157f2D8Fd) |
 | Deploy ParimutuelMarket | [`0x835A...b1e1A8`](https://sepolia.basescan.org/address/0xA77b282D03E8f894EdDBf1D5034D4B819b5D3220) |
 | `tipTeam("france", 5 USDT)` | [`0x4d66c31f...73ca38`](https://sepolia.basescan.org/tx/0x4d66c31f320b1e165c74aa121b10fae45a60ae8fdc62fadc289086be9273ca38) |
+| `tipPlayer("france", "Kylian Mbappé", 1 USDT)` | [`0x46467e5e...846abb`](https://sepolia.basescan.org/tx/0x46467e5e1f02d9a1c8eba3cc0506b16309426a8017edca30191f0fc4c4846abb) |
 | `createPool("Berlin watch party", equal)` | [`0x858ca92b...ef3d7`](https://sepolia.basescan.org/tx/0x858ca92b3a66a2ea8fbe983d9982c0c5243ae3a4faa69c4db60cc901eadef3d7) |
 | `contribute(poolId=2, 2 USDT)` | [`0xecf49663...446e60`](https://sepolia.basescan.org/tx/0xecf49663759a14de6c6a373e2232f0ba10637240c3ed24f9763b6aa159446e60) |
 | `placeBet("m_qf3", home, 3 USDT)` | [`0x3ce04329...56577d`](https://sepolia.basescan.org/tx/0x3ce04329508be859cf199c46323a10bca968917bb1ba9fb80ab076b5fa56577d) |
@@ -111,7 +112,7 @@ Every module is a real dependency in `package.json`, wired into a code path that
 | [`@tetherto/wdk-wallet-btc`](https://www.npmjs.com/package/@tetherto/wdk-wallet-btc) | `1.0.0-beta.11` | Derives a Bitcoin BIP-84 Native SegWit address from the SAME seed used for EVM, so a fan carries one recovery phrase and can hold USDt on Base AND BTC on mainnet. Exposed via `/api/btc`. See `src/wdk/btc-wallet.js`. |
 | Ethers.js v6 | `6.16.0` | Bridges the WDK signer into ERC-20 and primitive contract calls. Chosen because ethers is the WDK team's own default and every WDK helper returns raw private keys that ethers wraps cleanly. |
 
-**Three WDK modules in the runtime**, wired to concrete endpoints:
+**Four WDK modules in the runtime**, wired to concrete endpoints:
 
 ```
 seed
