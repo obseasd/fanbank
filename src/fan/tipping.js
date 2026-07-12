@@ -22,7 +22,9 @@
 import { ethers } from 'ethers'
 import { getTeam, getPlayer } from './teams.js'
 import { record } from './journal.js'
-import { bindOnChain, ensureAllowance } from './onchain.js'
+import { bindOnChain, ensureAllowance, DEFAULT_CONTRACTS } from './onchain.js'
+
+const TIP_ROUTER_ADDR = () => process.env.FANTIP_ROUTER_ADDRESS || DEFAULT_CONTRACTS.tipRouter
 
 /// Tip a whole team's treasury via the FanTipRouter contract.
 ///
@@ -46,7 +48,7 @@ export async function tipTeam (fanWallet, teamId, amountUsdt) {
   const approvalReceipt = await ensureAllowance({
     usdt: on.usdt,
     owner: fanWallet.address,
-    spender: process.env.FANTIP_ROUTER_ADDRESS,
+    spender: TIP_ROUTER_ADDR(),
     amountRaw,
   })
 
@@ -90,7 +92,7 @@ export async function tipPlayer (fanWallet, teamId, playerName, amountUsdt) {
   const approvalReceipt = await ensureAllowance({
     usdt: on.usdt,
     owner: fanWallet.address,
-    spender: process.env.FANTIP_ROUTER_ADDRESS,
+    spender: TIP_ROUTER_ADDR(),
     amountRaw,
   })
 

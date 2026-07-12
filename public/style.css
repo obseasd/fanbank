@@ -1359,28 +1359,28 @@ section, header, footer, main { position: relative; z-index: 1; }
   padding: 6px 10px;
   font-size: 12px;
 }
-/* Inline delete on the pool row: red, next to the title */
-.pool-row .pool-delete-inline {
+/* Inline info icon on the pool row: neutral, next to the title,
+ * opens the details modal (which then hosts the destructive action). */
+.pool-row .pool-info-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   padding: 0;
-  margin-left: 8px;
-  color: rgba(255, 100, 110, 0.6);
-  background: rgba(220, 60, 70, 0.08);
-  border: 1px solid rgba(220, 60, 70, 0.2);
+  margin-left: 6px;
+  color: var(--fg-dim);
+  background: transparent;
+  border: 0;
   border-radius: 6px;
   cursor: pointer;
-  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+  transition: background 140ms ease, color 140ms ease;
 }
-.pool-row .pool-delete-inline:hover {
-  color: #ff8087;
-  background: rgba(220, 60, 70, 0.22);
-  border-color: rgba(220, 60, 70, 0.5);
+.pool-row .pool-info-icon:hover {
+  color: var(--tether-strong);
+  background: rgba(38, 161, 123, 0.12);
 }
-.pool-row .pool-delete-inline svg { width: 12px; height: 12px; }
+.pool-row .pool-info-icon svg { width: 15px; height: 15px; }
 .pool-row .pool-title-line {
   display: flex;
   align-items: center;

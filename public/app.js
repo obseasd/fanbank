@@ -1172,8 +1172,8 @@ async function refreshPools () {
           <div>
             <div class="pool-title-line">
               <span class="pool-title">${p.purpose || '(no purpose)'}</span>
-              <button class="pool-delete-inline" data-delete="${p.poolId}" aria-label="Remove pool from view" title="Remove pool from view">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+              <button class="pool-info-icon" data-details="${p.poolId}" aria-label="View pool details" title="View pool details">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
               </button>
             </div>
             <div class="pool-meta">${team ? team.name + ' · ' : ''}${p.policy} · ${p.contributors} contributors</div>
@@ -1183,18 +1183,12 @@ async function refreshPools () {
           ${p.settled
             ? '<span class="settled-badge">settled</span>'
             : `<button class="btn ghost sm" data-payout="${p.poolId}">Payout</button>`}
-          <button class="btn ghost sm details-btn" data-details="${p.poolId}" title="View pool details">Details</button>
         </div>
       `
     }).join('')
     $$('button[data-contribute]').forEach(b => b.addEventListener('click', () => contributeToPool(b.dataset.contribute)))
     $$('button[data-payout]').forEach(b => b.addEventListener('click', () => payoutPool(b.dataset.payout)))
     $$('button[data-details]').forEach(b => b.addEventListener('click', () => openPoolDetails(b.dataset.details)))
-    $$('button[data-delete]').forEach(b => b.addEventListener('click', () => {
-      hidePool(b.dataset.delete)
-      toast({ level: 'ok', title: 'Pool removed from view', desc: 'On-chain contributions still verifiable on Basescan.' })
-      refreshPools().catch(() => {})
-    }))
   } catch (e) {
     toast({ level: 'err', title: 'Pool list failed', desc: e.message })
   }
@@ -1930,6 +1924,24 @@ async function boot () {
   tryAutoReconnect().catch(() => {})
   setInterval(() => { if (CONNECTED) refreshConnectedBalances() }, 30_000)
   setInterval(refreshMarkets, 20_000)
+
+  // Global chain-change listener. Previously the handler was only wired
+  // inside connectInjected(), so switching chains while in demo mode (or
+  // before ever connecting) produced no visible feedback. Registering
+  // here means every wallet chain flip is announced regardless of mode,
+  // and a wrong-chain warning fires proactively.
+  if (window.ethereum?.on) {
+    window.ethereum.on('chainChanged', async hexChainId => {
+      const newChainId = parseInt(hexChainId, 16)
+      const expected = CONFIG.chainId
+      if (newChainId === expected) {
+        toast({ level: 'ok', title: `Now on ${CONFIG.chainName || 'expected chain'}`, timeout: 3000 })
+      } else {
+        toast({ level: 'err', title: `Wrong network (chainId ${newChainId})`, desc: `FanBank runs on ${CONFIG.chainName || 'Base Sepolia'} (${expected}). Switch back to sign tx.`, timeout: 5000 })
+      }
+      if (CONNECTED?.provider) await refreshConnectedBalances().catch(() => {})
+    })
+  }
 }
 
 /// Backstop for any promise rejection that a handler forgot to catch.

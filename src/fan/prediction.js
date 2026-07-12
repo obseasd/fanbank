@@ -13,7 +13,9 @@
 import { ethers } from 'ethers'
 import { record, list as journalList } from './journal.js'
 import { getMatch, listMatches } from './matches.js'
-import { bindOnChain, ensureAllowance, OUTCOME, OUTCOME_LABEL } from './onchain.js'
+import { bindOnChain, ensureAllowance, OUTCOME, OUTCOME_LABEL, DEFAULT_CONTRACTS } from './onchain.js'
+
+const MARKET_ADDR = () => process.env.PARIMUTUEL_MARKET_ADDRESS || DEFAULT_CONTRACTS.market
 
 const PLATFORM_FEE_BPS = 200
 
@@ -40,7 +42,7 @@ export async function placeBet (fanWallet, { matchId, outcome, amountUsdt }) {
   const approvalReceipt = await ensureAllowance({
     usdt: on.usdt,
     owner: fanWallet.address,
-    spender: process.env.PARIMUTUEL_MARKET_ADDRESS,
+    spender: MARKET_ADDR(),
     amountRaw,
   })
 
@@ -72,7 +74,7 @@ export async function placeBet (fanWallet, { matchId, outcome, amountUsdt }) {
     outcome: String(outcome).toLowerCase(),
     amount: amountUsdt,
     from: fanWallet.address,
-    to: process.env.PARIMUTUEL_MARKET_ADDRESS,
+    to: MARKET_ADDR(),
     hash: tx.hash,
     approvalHash: approvalReceipt?.hash ?? null,
     status: receipt.status === 1 ? 'success' : 'reverted',

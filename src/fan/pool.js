@@ -16,7 +16,9 @@
 import { ethers } from 'ethers'
 import { record } from './journal.js'
 import { getTeam } from './teams.js'
-import { bindOnChain, ensureAllowance, POLICY, POLICY_LABEL } from './onchain.js'
+import { bindOnChain, ensureAllowance, POLICY, POLICY_LABEL, DEFAULT_CONTRACTS } from './onchain.js'
+
+const POOL_MANAGER_ADDR = () => process.env.FANPOOL_MANAGER_ADDRESS || DEFAULT_CONTRACTS.poolManager
 
 function policyId (policyName) {
   const map = { equal: POLICY.Equal, proportional: POLICY.Proportional, 'winner-takes': POLICY.WinnerTakes }
@@ -76,7 +78,7 @@ export async function contribute (fanWallet, { poolId, amountUsdt }) {
   const approvalReceipt = await ensureAllowance({
     usdt: on.usdt,
     owner: fanWallet.address,
-    spender: process.env.FANPOOL_MANAGER_ADDRESS,
+    spender: POOL_MANAGER_ADDR(),
     amountRaw,
   })
 
@@ -86,7 +88,7 @@ export async function contribute (fanWallet, { poolId, amountUsdt }) {
     type: 'pool-contribution',
     poolId: Number(poolId),
     from: fanWallet.address,
-    to: process.env.FANPOOL_MANAGER_ADDRESS,
+    to: POOL_MANAGER_ADDR(),
     amount: amountUsdt,
     hash: tx.hash,
     approvalHash: approvalReceipt?.hash ?? null,
