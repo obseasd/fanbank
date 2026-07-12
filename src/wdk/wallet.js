@@ -28,7 +28,10 @@ export class FanWallet {
     this.seed = config.seed || process.env.WDK_SEED
     this.rpcUrl = config.rpcUrl || process.env.RPC_URL || 'https://sepolia.base.org'
     this.accountIndex = config.accountIndex ?? 0
-    this.usdtAddress = (config.usdtAddress || process.env.USDT_ADDRESS || '').toLowerCase()
+    // Fallback to the verified Base Sepolia MockUSDT so a fresh Vercel
+    // deploy still boots when USDT_ADDRESS was forgotten in the
+    // environment. Any real chain flip sets the env var and overrides.
+    this.usdtAddress = (config.usdtAddress || process.env.USDT_ADDRESS || '0x596D6c5ac929d5a5117af397c174709A7Aa6C858').toLowerCase()
     this.usdtDecimals = Number(config.usdtDecimals ?? process.env.USDT_DECIMALS ?? 6)
 
     this.wdkManager = null

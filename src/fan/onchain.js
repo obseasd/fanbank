@@ -60,17 +60,30 @@ const MARKET_ABI = [
   'event PayoutClaimed(uint256 indexed betId, address indexed bettor, uint256 amount)',
 ]
 
+/// Default deployed addresses on Base Sepolia (chain 84532). These are
+/// the FanBank primitives verified on Basescan and stamped in the README.
+/// Any deployment that wants to point at a different set of contracts
+/// (mainnet Base, a fork, a private testnet) sets .env overrides.
+///
+/// Baking the demo addresses in as fallbacks fixes the classic Vercel
+/// footgun where an env var is set locally but not on the deploy target,
+/// which used to surface as a "Missing on-chain addresses" 400 at payout.
+export const DEFAULT_CONTRACTS = Object.freeze({
+  usdt: '0x596D6c5ac929d5a5117af397c174709A7Aa6C858',
+  tipRouter: '0x55486bA74bcBF84B414802c8B6AB8f18BF3ABA6c',
+  poolManager: '0x0945c05D14632c4387210357819A3f0157f2D8Fd',
+  market: '0xA77b282D03E8f894EdDBf1D5034D4B819b5D3220',
+})
+
 /// Bind the three contracts to an ethers signer (or provider for
-/// read-only). Reads addresses from process.env so a chain flip needs
-/// nothing more than an .env edit.
+/// read-only). Reads addresses from process.env with a fallback to the
+/// verified Base Sepolia deployment, so a chain flip needs nothing more
+/// than an .env edit but a fresh Vercel deploy still works out of the box.
 export function bindOnChain (signerOrProvider) {
-  const usdt = process.env.USDT_ADDRESS
-  const tipRouter = process.env.FANTIP_ROUTER_ADDRESS
-  const poolManager = process.env.FANPOOL_MANAGER_ADDRESS
-  const market = process.env.PARIMUTUEL_MARKET_ADDRESS
-  if (!usdt || !tipRouter || !poolManager || !market) {
-    throw new Error('Missing on-chain addresses in .env (USDT_ADDRESS, FANTIP_ROUTER_ADDRESS, FANPOOL_MANAGER_ADDRESS, PARIMUTUEL_MARKET_ADDRESS)')
-  }
+  const usdt = process.env.USDT_ADDRESS || DEFAULT_CONTRACTS.usdt
+  const tipRouter = process.env.FANTIP_ROUTER_ADDRESS || DEFAULT_CONTRACTS.tipRouter
+  const poolManager = process.env.FANPOOL_MANAGER_ADDRESS || DEFAULT_CONTRACTS.poolManager
+  const market = process.env.PARIMUTUEL_MARKET_ADDRESS || DEFAULT_CONTRACTS.market
   return {
     usdt: new ethers.Contract(usdt, ERC20_ABI, signerOrProvider),
     tipRouter: new ethers.Contract(tipRouter, TIP_ROUTER_ABI, signerOrProvider),

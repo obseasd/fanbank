@@ -714,6 +714,18 @@ async function clientTipTeam (teamId, amount) {
   return { hash: tx.hash, blockNumber: receipt.blockNumber, from: CONNECTED.address, approvalHash: approvalReceipt?.hash ?? null, amount: Number(amount) }
 }
 
+async function clientTipPlayer (teamId, playerName, amount) {
+  if (CONNECTED.mode !== 'external') throw new Error('Not in external mode')
+  if (!CONFIG.contracts?.tipRouter) throw new Error('FanTipRouter address missing from /api/config')
+  const raw = ethers.parseUnits(String(amount), CONFIG.usdt.decimals)
+  const approvalReceipt = await ensureAllowance(CONFIG.contracts.tipRouter, raw)
+  const router = new ethers.Contract(CONFIG.contracts.tipRouter, TIP_ROUTER_ABI, CONNECTED.signer)
+  const tx = await router.tipPlayer(teamId, playerName, raw)
+  const receipt = await tx.wait()
+  if (receipt.status !== 1) throw new Error('Tip reverted on chain')
+  return { hash: tx.hash, blockNumber: receipt.blockNumber, from: CONNECTED.address, approvalHash: approvalReceipt?.hash ?? null, amount: Number(amount) }
+}
+
 async function clientContribute (poolId, amount) {
   if (CONNECTED.mode !== 'external') throw new Error('Not in external mode')
   if (!CONFIG.contracts?.poolManager) throw new Error('FanPoolManager address missing')
@@ -864,14 +876,17 @@ function initDropdown (root, options, onChange, { placeholder, defaultValue } = 
   return { select, getValue: () => current }
 }
 
-let tipTeamDD, poolTeamDD, poolPolicyDD
+let tipTeamDD, tipPlayerDD, poolTeamDD, poolPolicyDD
+let TIP_MODE = 'team' // 'team' | 'player'
 
 /* ─── Tip flow ─── */
 async function submitTip () {
   const teamId = tipTeamDD.getValue()
+  const playerName = TIP_MODE === 'player' ? tipPlayerDD?.getValue() : null
   const amount = Number($('#tip-amount').value)
   const hint = $('#tip-hint')
   if (!teamId) { hint.className = 'hint err'; hint.textContent = 'Pick a team first.'; return }
+  if (TIP_MODE === 'player' && !playerName) { hint.className = 'hint err'; hint.textContent = 'Pick a player first.'; return }
   if (!amount || amount <= 0) { hint.className = 'hint err'; hint.textContent = 'Amount must be positive.'; return }
 
   const btn = $('#tip-btn')
@@ -882,36 +897,46 @@ async function submitTip () {
   try {
     await ensureConnected()
     const team = TEAMS.find(t => t.id === teamId)
+    const player = playerName ? (team?.players || []).find(p => p.name === playerName) : null
     const shortage = preflightSpend(amount)
     if (shortage) throw new Error(shortage)
     let receipt
+    const targetLabel = TIP_MODE === 'player' ? `${playerName} (${team.name})` : team.name
+    const targetAddress = TIP_MODE === 'player' ? (player?.tipAddress || null) : team.tipAddress
+
     if (CONNECTED.mode === 'external') {
       await ensureCorrectChain()
-      hint.textContent = 'Signing tip via FanTipRouter…'
-      const res = await clientTipTeam(teamId, amount)
-      hint.textContent = `Tx sent, confirming…`
+      hint.textContent = `Signing tip to ${targetLabel} via FanTipRouter…`
+      const res = TIP_MODE === 'player'
+        ? await clientTipPlayer(teamId, playerName, amount)
+        : await clientTipTeam(teamId, amount)
+      hint.textContent = 'Tx sent, confirming…'
       receipt = res
-      await api('/api/tip/team/external', { method: 'POST', body: {
-        teamId, amount, txHash: res.hash, from: res.from, to: team.tipAddress,
-        approvalHash: res.approvalHash, router: CONFIG.contracts?.tipRouter,
-      } })
+      const endpoint = TIP_MODE === 'player' ? '/api/tip/player/external' : '/api/tip/team/external'
+      const body = TIP_MODE === 'player'
+        ? { teamId, playerName, amount, txHash: res.hash, from: res.from, to: targetAddress, approvalHash: res.approvalHash, router: CONFIG.contracts?.tipRouter }
+        : { teamId, amount, txHash: res.hash, from: res.from, to: targetAddress, approvalHash: res.approvalHash, router: CONFIG.contracts?.tipRouter }
+      await api(endpoint, { method: 'POST', body }).catch(() => {}) // journal is best-effort
     } else {
-      const r = await api('/api/tip/team', { method: 'POST', body: { teamId, amount } })
+      const path = TIP_MODE === 'player' ? '/api/tip/player' : '/api/tip/team'
+      const body = TIP_MODE === 'player' ? { teamId, playerName, amount } : { teamId, amount }
+      const r = await api(path, { method: 'POST', body })
       receipt = r.receipt
     }
     pushClientEvent({
       type: 'tip',
-      target: 'team',
+      target: TIP_MODE,
       teamId: team.id,
       teamName: team.name,
+      playerName: playerName ?? undefined,
       amount,
       from: receipt.from,
-      to: team.tipAddress,
+      to: targetAddress,
       hash: receipt.hash,
     })
     hint.className = 'hint ok'
-    hint.textContent = `Tipped ${fmtUsdt(amount)} to ${team.name}. Tx ${shortHash(receipt.hash)}.`
-    toast({ level: 'ok', title: `Tipped ${fmtUsdt(amount)} to ${team.name}`, txHash: receipt.hash })
+    hint.textContent = `Tipped ${fmtUsdt(amount)} to ${targetLabel}. Tx ${shortHash(receipt.hash)}.`
+    toast({ level: 'ok', title: `Tipped ${fmtUsdt(amount)} to ${targetLabel}`, txHash: receipt.hash })
     $('#tip-amount').value = ''
     await Promise.all([refreshConnectedBalances(), refreshStats(), refreshJournal()])
   } catch (e) {
@@ -922,6 +947,42 @@ async function submitTip () {
   } finally {
     btn.disabled = false
   }
+}
+
+/// Rebuild the player dropdown to the players of the currently selected
+/// tip team. Called when either the team dropdown changes or the user
+/// flips the segmented toggle to "Player".
+function refreshTipPlayerDD () {
+  const teamId = tipTeamDD?.getValue()
+  const team = TEAMS.find(t => t.id === teamId)
+  const players = team?.players || []
+  const options = players.length
+    ? players.map(p => ({ value: p.name, label: p.name, sub: p.tipAddress ? shortAddr(p.tipAddress) : '' }))
+    : [{ value: '', label: 'No players registered for this team' }]
+  const wrap = $('[data-dropdown="tip-player"]')
+  if (!wrap) return
+  // Rebuild by clearing and re-init. Cheaper than an in-place update
+  // because the dropdown owns its portaled panel node under document.body.
+  wrap.innerHTML = `
+    <button class="dd-btn" type="button">
+      <span class="dd-current">${team ? 'Pick a player' : 'Pick a team first'}</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="dd-panel" role="listbox"></div>
+  `
+  tipPlayerDD = initDropdown(wrap, options, () => {}, { placeholder: team ? 'Pick a player' : 'Pick a team first' })
+}
+
+function setTipMode (mode) {
+  TIP_MODE = mode === 'player' ? 'player' : 'team'
+  $$('[data-tip-mode]').forEach(b => {
+    const active = b.dataset.tipMode === TIP_MODE
+    b.classList.toggle('active', active)
+    b.setAttribute('aria-selected', active ? 'true' : 'false')
+  })
+  const playerField = $('.field-player')
+  if (playerField) playerField.hidden = TIP_MODE !== 'player'
+  if (TIP_MODE === 'player') refreshTipPlayerDD()
 }
 
 /* ─── Pool flow ─── */
@@ -1033,20 +1094,120 @@ async function refreshPools () {
           ${p.settled
             ? '<span class="settled-badge">settled</span>'
             : `<button class="btn ghost sm" data-payout="${p.poolId}">Payout</button>`}
-          <button class="pool-delete" data-delete="${p.poolId}" aria-label="Remove pool from view" title="Remove pool from view">&times;</button>
+          <button class="btn ghost sm details-btn" data-details="${p.poolId}" title="View pool details">Details</button>
         </div>
       `
     }).join('')
     $$('button[data-contribute]').forEach(b => b.addEventListener('click', () => contributeToPool(b.dataset.contribute)))
     $$('button[data-payout]').forEach(b => b.addEventListener('click', () => payoutPool(b.dataset.payout)))
-    $$('button[data-delete]').forEach(b => b.addEventListener('click', () => {
-      hidePool(b.dataset.delete)
-      toast({ level: 'ok', title: 'Pool removed from view', desc: 'On-chain contributions still verifiable on Etherscan.' })
-      refreshPools().catch(() => {})
-    }))
+    $$('button[data-details]').forEach(b => b.addEventListener('click', () => openPoolDetails(b.dataset.details)))
   } catch (e) {
     toast({ level: 'err', title: 'Pool list failed', desc: e.message })
   }
+}
+
+/// Detailed pool view. Reads on-chain state (creator, purpose, policy,
+/// team, total, settled flag) and the merged journal to rebuild a
+/// timeline of contributions. Ships a Remove-from-view action that maps
+/// to the same hidePool() the row-level cross used, but scoped to a
+/// full modal so a judge can inspect the pool before deleting it.
+async function openPoolDetails (poolId) {
+  const numeric = Number(poolId)
+  let onChain = null
+  try {
+    if (CONFIG.contracts?.poolManager) {
+      const provider = CONNECTED?.provider || new ethers.JsonRpcProvider(CONFIG.rpcHttp || 'https://sepolia.base.org')
+      const pm = new ethers.Contract(CONFIG.contracts.poolManager, POOL_MANAGER_ABI, provider)
+      const raw = await pm.pools(numeric)
+      const policyId = Number(raw.policy ?? raw[2])
+      onChain = {
+        creator: raw.creator ?? raw[0],
+        purpose: raw.purpose ?? raw[1],
+        policy: ['equal', 'proportional', 'winner-takes'][policyId] || 'unknown',
+        teamId: raw.teamId ?? raw[3],
+        totalUsdt: Number(ethers.formatUnits(raw.totalUsdt ?? raw[4], CONFIG.usdt.decimals)),
+        payoutTime: Number(raw.payoutTime ?? raw[5]),
+        settled: Boolean(raw.settled ?? raw[6]),
+      }
+    }
+  } catch (e) {
+    console.warn('[fanbank] pool on-chain read failed:', e?.message)
+  }
+
+  // Local + server journal to build a chronological event list for the pool.
+  const journal = await api('/api/journal').then(r => r.entries || []).catch(() => [])
+  const events = [...journal, ...loadClientEvents()]
+    .filter(e => (e.poolId === poolId || Number(e.poolId) === numeric) && (e.status || 'success') === 'success')
+    .sort((a, b) => (a.ts || 0) - (b.ts || 0))
+  const created = events.find(e => e.type === 'pool-created')
+  const contributions = events.filter(e => e.type === 'pool-contribution')
+  const payouts = events.filter(e => e.type === 'pool-payout' || e.type === 'pool-settled')
+
+  const team = onChain?.teamId ? TEAMS.find(t => t.id === onChain.teamId) : null
+  const explorer = CONFIG?.explorer || 'https://sepolia.basescan.org'
+  const linkAddr = a => a ? `<a href="${explorer}/address/${a}" target="_blank" rel="noopener">${shortAddr(a)}</a>` : '<span class="mono">-</span>'
+  const linkTx = h => h && !String(h).startsWith('local:')
+    ? `<a href="${explorer}/tx/${h}" target="_blank" rel="noopener">${shortHash(h)} ↗</a>`
+    : '<span class="mono">off-chain</span>'
+  const fmtDate = ts => ts ? new Date(ts).toLocaleString() : '-'
+  const payoutTimeLabel = onChain?.payoutTime
+    ? (onChain.payoutTime > 0 ? new Date(onChain.payoutTime * 1000).toLocaleString() : 'no deadline')
+    : '-'
+
+  const contributionsHTML = contributions.length
+    ? contributions.map(c => `
+        <div class="generic-modal-preview-row">
+          <span class="to">${linkAddr(c.from)} · ${timeAgo(c.ts)}</span>
+          <span class="amount">${fmtUsdt(c.amount)}</span>
+        </div>
+      `).join('')
+    : '<div class="hint">No contributions yet.</div>'
+
+  const payoutsHTML = payouts.length
+    ? payouts.map(p => `
+        <div class="generic-modal-preview-row">
+          <span class="to">${p.type === 'pool-settled' ? `settled · ${p.policy}` : linkAddr(p.to)} · ${timeAgo(p.ts)}</span>
+          <span class="amount">${p.type === 'pool-settled' ? `${p.payouts || 0} recipients` : fmtUsdt(p.amount)}</span>
+        </div>
+      `).join('')
+    : '<div class="hint">No payout yet.</div>'
+
+  const detailsHTML = `
+    <dl class="pool-details-grid">
+      <dt>Pool ID</dt><dd>#${numeric}</dd>
+      <dt>Purpose</dt><dd>${onChain?.purpose || created?.purpose || '(unknown)'}</dd>
+      <dt>Team</dt><dd>${team ? team.name : (onChain?.teamId || 'None')}</dd>
+      <dt>Policy</dt><dd>${onChain?.policy || created?.policy || '?'}</dd>
+      <dt>Total pooled</dt><dd>${fmtUsdt(onChain?.totalUsdt ?? 0)}</dd>
+      <dt>Contributors</dt><dd>${new Set(contributions.map(c => c.from).filter(Boolean)).size}</dd>
+      <dt>Creator</dt><dd>${linkAddr(onChain?.creator)}</dd>
+      <dt>Created</dt><dd>${fmtDate(created?.ts)}</dd>
+      <dt>Payout deadline</dt><dd>${payoutTimeLabel}</dd>
+      <dt>Status</dt><dd>${onChain?.settled ? 'Settled' : 'Open'}</dd>
+    </dl>
+    <div>
+      <div class="generic-modal-title" style="font-size:13px;margin-top:14px;">Contributions</div>
+      ${contributionsHTML}
+    </div>
+    <div>
+      <div class="generic-modal-title" style="font-size:13px;margin-top:14px;">Payouts</div>
+      ${payoutsHTML}
+    </div>
+  `
+
+  const values = await openModal({
+    title: `Pool "${onChain?.purpose || created?.purpose || '#' + numeric}"`,
+    description: 'Full on-chain state + audit trail for this pool.',
+    fields: [
+      { name: '_pool_details', type: 'preview', html: detailsHTML },
+    ],
+    submit: 'Remove pool from view',
+    cancel: 'Close',
+  })
+  if (!values) return
+  hidePool(poolId)
+  toast({ level: 'ok', title: 'Pool removed from view', desc: 'On-chain contributions still verifiable on Basescan.' })
+  refreshPools().catch(() => {})
 }
 
 async function contributeToPool (poolId) {
@@ -1466,7 +1627,11 @@ async function loadTeams () {
   const { teams } = await api('/api/teams')
   TEAMS = teams
   const options = teams.map(t => ({ value: t.id, iso: t.iso, label: t.name, sub: t.nickname }))
-  tipTeamDD = initDropdown($('[data-dropdown="tip-team"]'), options, () => {}, { placeholder: 'Pick a team' })
+  tipTeamDD = initDropdown($('[data-dropdown="tip-team"]'), options, () => {
+    // Team change resets the player dropdown to the newly picked team's roster.
+    if (TIP_MODE === 'player') refreshTipPlayerDD()
+  }, { placeholder: 'Pick a team' })
+  refreshTipPlayerDD()
   poolTeamDD = initDropdown($('[data-dropdown="pool-team"]'),
     [{ value: '', label: 'No team' }, ...options], () => {},
     { placeholder: 'No team', defaultValue: '' })
@@ -1529,6 +1694,7 @@ document.addEventListener('keydown', e => {
 })
 
 $('#tip-btn').addEventListener('click', submitTip)
+$$('[data-tip-mode]').forEach(b => b.addEventListener('click', () => setTipMode(b.dataset.tipMode)))
 $('#pool-create-btn').addEventListener('click', submitPool)
 
 $('#modal-copy').addEventListener('click', () => CONNECTED && copyToClipboard(CONNECTED.address, 'Address copied'))

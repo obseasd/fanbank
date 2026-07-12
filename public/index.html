@@ -166,8 +166,8 @@
       <div class="panel">
         <div class="panel-head">
           <div>
-            <h3>Tip a team</h3>
-            <p class="panel-sub">One tx, straight to the team's on-chain tip address.</p>
+            <h3>Tip a team or a player</h3>
+            <p class="panel-sub">One tx, straight to the recipient's on-chain tip address.</p>
           </div>
           <span class="panel-tag usdt-badge" title="USDT">
             <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -178,11 +178,25 @@
           </span>
         </div>
         <div class="panel-body">
+          <div class="segmented" role="tablist" aria-label="Tip target">
+            <button class="seg-btn active" type="button" role="tab" aria-selected="true" data-tip-mode="team">Team</button>
+            <button class="seg-btn" type="button" role="tab" aria-selected="false" data-tip-mode="player">Player</button>
+          </div>
           <div class="field field-team">
             <label>Team</label>
             <div class="dropdown" data-dropdown="tip-team">
               <button class="dd-btn" type="button">
                 <span class="dd-current">Pick a team</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <div class="dd-panel" role="listbox"></div>
+            </div>
+          </div>
+          <div class="field field-player" hidden>
+            <label>Player</label>
+            <div class="dropdown" data-dropdown="tip-player">
+              <button class="dd-btn" type="button">
+                <span class="dd-current">Pick a team first</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
               </button>
               <div class="dd-panel" role="listbox"></div>

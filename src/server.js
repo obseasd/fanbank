@@ -28,6 +28,7 @@ import { placeBet, marketState, settleMarket, snapshotAllMarkets, claimPayout } 
 import { list as journalList, stats as journalStats, reset as journalReset } from './fan/journal.js'
 import { resetOverrides as resetMatchOverrides } from './fan/matches.js'
 import { recordExternalTip, recordExternalContribution, recordExternalBet } from './fan/external.js'
+import { DEFAULT_CONTRACTS } from './fan/onchain.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -137,9 +138,9 @@ app.get('/api/config', (_req, res) => {
     // v2 primitive contracts. Frontends that sign client-side call these
     // directly via ethers instead of the operator's WDK wallet.
     contracts: {
-      tipRouter: process.env.FANTIP_ROUTER_ADDRESS ?? null,
-      poolManager: process.env.FANPOOL_MANAGER_ADDRESS ?? null,
-      market: process.env.PARIMUTUEL_MARKET_ADDRESS ?? null,
+      tipRouter: process.env.FANTIP_ROUTER_ADDRESS || DEFAULT_CONTRACTS.tipRouter,
+      poolManager: process.env.FANPOOL_MANAGER_ADDRESS || DEFAULT_CONTRACTS.poolManager,
+      market: process.env.PARIMUTUEL_MARKET_ADDRESS || DEFAULT_CONTRACTS.market,
     },
   })
 })
