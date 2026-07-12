@@ -134,6 +134,13 @@ app.get('/api/config', (_req, res) => {
     // market escrow in V1. Fans signing client-side send USDt here for
     // pool contributions and bets; direct tips go to the team address.
     escrow: wallet?.address ?? null,
+    // v2 primitive contracts. Frontends that sign client-side call these
+    // directly via ethers instead of the operator's WDK wallet.
+    contracts: {
+      tipRouter: process.env.FANTIP_ROUTER_ADDRESS ?? null,
+      poolManager: process.env.FANPOOL_MANAGER_ADDRESS ?? null,
+      market: process.env.PARIMUTUEL_MARKET_ADDRESS ?? null,
+    },
   })
 })
 

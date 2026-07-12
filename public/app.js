@@ -606,6 +606,83 @@ async function transferUsdt (to, amount) {
   return { hash: tx.hash, from: CONNECTED.address, to, amount: Number(amount), blockNumber: receipt.blockNumber }
 }
 
+/* ─── v2: Client-side ABIs + helpers for the three primitive contracts ─── */
+
+const TIP_ROUTER_ABI = [
+  'function tipTeam(string teamId, uint256 amount) external',
+  'function tipPlayer(string teamId, string playerName, uint256 amount) external',
+  'function teamAddress(string) view returns (address)',
+]
+
+const POOL_MANAGER_ABI = [
+  'function createPool(string purpose, uint8 policy, string teamId, uint256 payoutTime) returns (uint256)',
+  'function contribute(uint256 poolId, uint256 amount) external',
+  'function pools(uint256) view returns (address creator, string purpose, uint8 policy, string teamId, uint256 totalUsdt, uint256 payoutTime, bool settled)',
+  'function nextPoolId() view returns (uint256)',
+  'event PoolCreated(uint256 indexed poolId, address indexed creator, string purpose, uint8 policy, string teamId, uint256 payoutTime)',
+]
+
+const MARKET_ABI = [
+  'function openMarket(string matchId) external',
+  'function placeBet(string matchId, uint8 outcome, uint256 amount) returns (uint256)',
+  'function markets(string) view returns (string matchId, uint256 totalStake, uint256 stakeHome, uint256 stakeAway, uint256 stakeDraw, uint8 winning, uint8 status)',
+  'event BetPlaced(uint256 indexed betId, address indexed bettor, string matchId, uint8 outcome, uint256 amount)',
+]
+
+const OUTCOME_ID = { home: 0, away: 1, draw: 2 }
+const POLICY_ID = { equal: 0, proportional: 1, 'winner-takes': 2 }
+
+/// Ensure USDT allowance for a given spender is at least `amountRaw`.
+/// Idempotent: skips the approve() tx when the current allowance
+/// already covers the amount. Returns the approve tx hash or null.
+async function ensureAllowance (spender, amountRaw) {
+  const usdt = new ethers.Contract(CONFIG.usdt.address, ERC20_ABI, CONNECTED.signer)
+  const current = await usdt.allowance(CONNECTED.address, spender)
+  if (current >= amountRaw) return null
+  const tx = await usdt.approve(spender, ethers.MaxUint256)
+  const receipt = await tx.wait()
+  return { hash: tx.hash, blockNumber: receipt.blockNumber }
+}
+
+/// Client-side tip via FanTipRouter. One approve tx (first time only)
+/// followed by one tipTeam call. Returns the ethers TransactionResponse
+/// so callers can pass tx.hash to the audit journal + toast.
+async function clientTipTeam (teamId, amount) {
+  if (CONNECTED.mode !== 'external') throw new Error('Not in external mode')
+  if (!CONFIG.contracts?.tipRouter) throw new Error('FanTipRouter address missing from /api/config')
+  const raw = ethers.parseUnits(String(amount), CONFIG.usdt.decimals)
+  const approvalReceipt = await ensureAllowance(CONFIG.contracts.tipRouter, raw)
+  const router = new ethers.Contract(CONFIG.contracts.tipRouter, TIP_ROUTER_ABI, CONNECTED.signer)
+  const tx = await router.tipTeam(teamId, raw)
+  const receipt = await tx.wait()
+  if (receipt.status !== 1) throw new Error('Tip reverted on chain')
+  return { hash: tx.hash, blockNumber: receipt.blockNumber, from: CONNECTED.address, approvalHash: approvalReceipt?.hash ?? null, amount: Number(amount) }
+}
+
+async function clientContribute (poolId, amount) {
+  if (CONNECTED.mode !== 'external') throw new Error('Not in external mode')
+  if (!CONFIG.contracts?.poolManager) throw new Error('FanPoolManager address missing')
+  const raw = ethers.parseUnits(String(amount), CONFIG.usdt.decimals)
+  const approvalReceipt = await ensureAllowance(CONFIG.contracts.poolManager, raw)
+  const pm = new ethers.Contract(CONFIG.contracts.poolManager, POOL_MANAGER_ABI, CONNECTED.signer)
+  const tx = await pm.contribute(poolId, raw)
+  const receipt = await tx.wait()
+  if (receipt.status !== 1) throw new Error('Contribution reverted on chain')
+  return { hash: tx.hash, blockNumber: receipt.blockNumber, from: CONNECTED.address, approvalHash: approvalReceipt?.hash ?? null, amount: Number(amount) }
+}
+
+async function clientPlaceBet (matchId, outcome, amount) {
+  if (CONNECTED.mode !== 'external') throw new Error('Not in external mode')
+  if (!CONFIG.contracts?.market) throw new Error('ParimutuelMarket address missing')
+  const raw = ethers.parseUnits(String(amount), CONFIG.usdt.decimals)
+  const approvalReceipt = await ensureAllowance(CONFIG.contracts.market, raw)
+  const market = new ethers.Contract(CONFIG.contracts.market, MARKET_ABI, CONNECTED.signer)
+  const tx = await market.placeBet(matchId, OUTCOME_ID[outcome] ?? 0, raw)
+  const receipt = await tx.wait()
+  if (receipt.status !== 1) throw new Error('Bet reverted on chain')
+  return { hash: tx.hash, blockNumber: receipt.blockNumber, from: CONNECTED.address, approvalHash: approvalReceipt?.hash ?? null, amount: Number(amount), outcome, matchId }
+}
+
 /* ─── Stats strip ─── */
 async function refreshStats () {
   try {
@@ -752,12 +829,13 @@ async function submitTip () {
     const team = TEAMS.find(t => t.id === teamId)
     let receipt
     if (CONNECTED.mode === 'external') {
-      hint.textContent = 'Sign the USDt transfer in your wallet…'
-      const res = await transferUsdt(team.tipAddress, amount)
+      hint.textContent = 'Signing tip via FanTipRouter…'
+      const res = await clientTipTeam(teamId, amount)
       hint.textContent = `Tx sent, confirming…`
       receipt = res
       await api('/api/tip/team/external', { method: 'POST', body: {
         teamId, amount, txHash: res.hash, from: res.from, to: team.tipAddress,
+        approvalHash: res.approvalHash, router: CONFIG.contracts?.tipRouter,
       } })
     } else {
       const r = await api('/api/tip/team', { method: 'POST', body: { teamId, amount } })
@@ -924,9 +1002,10 @@ async function contributeToPool (poolId) {
     await ensureConnected()
     let receipt
     if (CONNECTED.mode === 'external') {
-      receipt = await transferUsdt(CONFIG.escrow, amount)
+      receipt = await clientContribute(Number(poolId), amount)
       await api(`/api/pool/${poolId}/contribute/external`, { method: 'POST', body: {
-        amount, txHash: receipt.hash, from: receipt.from, to: CONFIG.escrow,
+        amount, txHash: receipt.hash, from: receipt.from, to: CONFIG.contracts?.poolManager,
+        approvalHash: receipt.approvalHash, manager: CONFIG.contracts?.poolManager,
       } })
     } else {
       const r = await api(`/api/pool/${poolId}/contribute`, { method: 'POST', body: { amount } })
@@ -937,7 +1016,7 @@ async function contributeToPool (poolId) {
       poolId,
       amount,
       from: receipt.from,
-      to: CONFIG.escrow,
+      to: CONFIG.contracts?.poolManager,
       hash: receipt.hash,
     })
     toast({ level: 'ok', title: `Contributed ${fmtUsdt(amount)}`, txHash: receipt.hash })
@@ -1115,9 +1194,11 @@ async function placeBet (matchId, outcome) {
     await ensureConnected()
     let receipt
     if (CONNECTED.mode === 'external') {
-      receipt = await transferUsdt(CONFIG.escrow, amount)
+      receipt = await clientPlaceBet(matchId, outcome, amount)
       await api('/api/bet/external', { method: 'POST', body: {
-        matchId, outcome, amount, txHash: receipt.hash, from: receipt.from, to: CONFIG.escrow,
+        matchId, outcome, amount, txHash: receipt.hash, from: receipt.from,
+        to: CONFIG.contracts?.market, approvalHash: receipt.approvalHash,
+        market: CONFIG.contracts?.market,
       } })
     } else {
       const r = await api('/api/bet', { method: 'POST', body: { matchId, outcome, amount } })
@@ -1133,7 +1214,7 @@ async function placeBet (matchId, outcome) {
       outcome,
       amount,
       from: receipt.from,
-      to: CONFIG.escrow,
+      to: CONFIG.contracts?.market,
       hash: receipt.hash,
     })
     toast({ level: 'ok', title: `Bet placed: ${fmtUsdt(amount)} on ${outcomeLabel}`, txHash: receipt.hash })
