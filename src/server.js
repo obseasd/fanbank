@@ -23,8 +23,8 @@ import { createFanWallet } from './wdk/wallet.js'
 import { TEAMS, getTeam } from './fan/teams.js'
 import { assertSchedule, listMatches, settleMatch, getMatch } from './fan/matches.js'
 import { tipTeam, tipPlayer } from './fan/tipping.js'
-import { createPool, contribute, computeSplit, payout, listPools } from './fan/pool.js'
-import { placeBet, marketState, settleMarket, snapshotAllMarkets } from './fan/prediction.js'
+import { createPool, contribute, payout, listPools, readPool } from './fan/pool.js'
+import { placeBet, marketState, settleMarket, snapshotAllMarkets, claimPayout } from './fan/prediction.js'
 import { list as journalList, stats as journalStats, reset as journalReset } from './fan/journal.js'
 import { resetOverrides as resetMatchOverrides } from './fan/matches.js'
 import { recordExternalTip, recordExternalContribution, recordExternalBet } from './fan/external.js'
@@ -153,12 +153,20 @@ app.get('/api/market/:matchId', async (req, res) => {
   catch (e) { res.status(400).json({ error: e.message }) }
 })
 app.get('/api/pools', async (_req, res) => {
-  try { res.json({ pools: await listPools() }) }
-  catch (e) { res.status(500).json({ error: e.message }) }
+  try {
+    const provider = new ethers.JsonRpcProvider(process.env.RPC_URL || 'https://sepolia.base.org')
+    res.json({ pools: await listPools(provider) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 app.get('/api/pool/:id/split', async (req, res) => {
-  try { res.json(await computeSplit(req.params.id)) }
-  catch (e) { res.status(400).json({ error: e.message }) }
+  // v2 delegates split logic to the on-chain FanPoolManager. This
+  // endpoint returns the pool's current state; the actual split is
+  // computed by the contract at payout time.
+  try {
+    const provider = new ethers.JsonRpcProvider(process.env.RPC_URL || 'https://sepolia.base.org')
+    const pool = await readPool(Number(req.params.id), provider)
+    res.json({ pool, note: 'Split is computed on-chain by FanPoolManager.payout{Equal,Proportional,WinnerTakes}. Call the payout endpoint to trigger it.' })
+  } catch (e) { res.status(400).json({ error: e.message }) }
 })
 app.get('/api/journal', async (req, res) => {
   const filter = {}
@@ -255,13 +263,7 @@ app.post('/api/pool/create', async (req, res) => {
   if (!requireWallet(res)) return
   try {
     const { teamId, purpose, policy, payoutBefore } = req.body ?? {}
-    const r = await createPool({
-      operator: wallet.address,
-      teamId,
-      purpose,
-      policy,
-      payoutBefore,
-    })
+    const r = await createPool(wallet, { teamId, purpose, policy, payoutBefore })
     res.json(r)
   } catch (e) { res.status(400).json({ error: e.message }) }
 })
@@ -271,8 +273,7 @@ app.post('/api/pool/:id/contribute', txLimit, async (req, res) => {
   try {
     const { amount } = req.body ?? {}
     const r = await contribute(wallet, {
-      poolId: req.params.id,
-      operatorAddress: wallet.address,
+      poolId: Number(req.params.id),
       amountUsdt: Number(amount),
     })
     res.json(r)
@@ -282,8 +283,16 @@ app.post('/api/pool/:id/contribute', txLimit, async (req, res) => {
 app.post('/api/pool/:id/payout', txLimit, async (req, res) => {
   if (!requireWallet(res)) return
   try {
-    const { customSplits, winnerAddress } = req.body ?? {}
-    const r = await payout(wallet, req.params.id, { customSplits, winnerAddress })
+    const { recipients } = req.body ?? {}
+    const r = await payout(wallet, Number(req.params.id), { recipients: recipients ?? [] })
+    res.json(r)
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+
+app.post('/api/bet/:betId/claim', txLimit, async (req, res) => {
+  if (!requireWallet(res)) return
+  try {
+    const r = await claimPayout(wallet, Number(req.params.betId))
     res.json(r)
   } catch (e) { res.status(400).json({ error: e.message }) }
 })
@@ -296,7 +305,6 @@ app.post('/api/bet', txLimit, async (req, res) => {
       matchId,
       outcome,
       amountUsdt: Number(amount),
-      escrowAddress: wallet.address,
     })
     res.json(r)
   } catch (e) { res.status(400).json({ error: e.message }) }

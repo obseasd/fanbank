@@ -1,168 +1,164 @@
-/// Prediction market on match outcomes.
+/// Parimutuel prediction market module (on-chain).
 ///
-/// Each match has a market with three outcomes (home / away / draw).
-/// Fans place bets by sending USDt from their WDK wallet to the market
-/// escrow address (in V1 = the operator's wallet, same custody trick as
-/// the group pool). Once the match settles the market pays out to
-/// winners pro-rata to their stake share of the winning side.
+/// Fans place bets on match outcomes by calling ParimutuelMarket
+/// (which pulls USDt via transferFrom). Odds are the current stake
+/// distribution, computed on-chain via odds(matchId). When the oracle
+/// settles the match, winners claim their pro-rata share of the
+/// remaining pool via claimPayout(betId).
 ///
-/// Odds are computed on the fly from the current stake distribution
-/// (parimutuel style): if 60% of the total pool is on 'home' and home
-/// wins, home backers receive their stake × (total / homeStake) = 1/0.6
-/// ≈ 1.67× their stake. No fixed-odds book, no house edge, just a
-/// pool split with a fixed 2% platform fee to keep the demo honest.
-///
-/// This is a conceptually simple pattern that Polymarket uses at
-/// settle time. What FanBank adds is: the fan's stake is a real USDt
-/// transfer from their WDK wallet, the payout is a real USDt transfer
-/// back, and every step is journaled with tx hashes so the audit trail
-/// is one grep away.
+/// v1 held bets in the operator wallet and split payouts off chain.
+/// v2 uses the on-chain ParimutuelMarket contract so no custody, no
+/// operator sweep path, and every bet + claim is a verifiable tx.
 
-import { randomUUID } from 'node:crypto'
-import { record, list } from './journal.js'
+import { ethers } from 'ethers'
+import { record, list as journalList } from './journal.js'
 import { getMatch, listMatches } from './matches.js'
+import { bindOnChain, ensureAllowance, OUTCOME, OUTCOME_LABEL } from './onchain.js'
 
-const PLATFORM_FEE_BPS = 200 // 2% fee kept by the operator
+const PLATFORM_FEE_BPS = 200
 
-/// Place a bet on a match.
-///   outcome: 'home' | 'away' | 'draw'
-export async function placeBet (fanWallet, { matchId, outcome, amountUsdt, escrowAddress }) {
+function outcomeToId (o) {
+  if (typeof o === 'number') return o
+  const map = { home: OUTCOME.Home, away: OUTCOME.Away, draw: OUTCOME.Draw }
+  const id = map[String(o).toLowerCase()]
+  if (id === undefined) throw new Error(`Unknown outcome: ${o}`)
+  return id
+}
+
+/// Place a bet on a match. Returns { betId, receipt, event }.
+///   outcome: 'home' | 'away' | 'draw' (or 0/1/2)
+export async function placeBet (fanWallet, { matchId, outcome, amountUsdt }) {
   const m = getMatch(matchId)
   if (!m) throw new Error(`Unknown match: ${matchId}`)
-  if (m.status !== 'scheduled') {
-    throw new Error(`Match ${matchId} is ${m.status}, bets closed`)
+  if (m.status !== 'scheduled') throw new Error(`Match ${matchId} is ${m.status}, bets closed`)
+  if (!Number.isFinite(amountUsdt) || amountUsdt <= 0) throw new Error('Bet stake must be a positive number of USDt')
+
+  const decimals = fanWallet.usdtDecimals ?? 6
+  const amountRaw = ethers.parseUnits(String(amountUsdt), decimals)
+  const on = bindOnChain(fanWallet.signer)
+
+  const approvalReceipt = await ensureAllowance({
+    usdt: on.usdt,
+    owner: fanWallet.address,
+    spender: process.env.PARIMUTUEL_MARKET_ADDRESS,
+    amountRaw,
+  })
+
+  // Open the market lazily on the first bet, so the operator does not
+  // need a pre-deploy hook. If it is already open, this reverts and
+  // we catch below.
+  try {
+    const openTx = await on.market.openMarket(matchId)
+    await openTx.wait()
+  } catch (_) { /* already open, ignore */ }
+
+  const tx = await on.market.placeBet(matchId, outcomeToId(outcome), amountRaw)
+  const receipt = await tx.wait()
+
+  let betId = null
+  for (const log of receipt.logs) {
+    try {
+      const parsed = on.market.interface.parseLog(log)
+      if (parsed?.name === 'BetPlaced') { betId = Number(parsed.args.betId); break }
+    } catch { /* ignore */ }
   }
-  if (!['home', 'away', 'draw'].includes(outcome)) {
-    throw new Error(`Outcome must be home|away|draw, got ${outcome}`)
-  }
-  if (!escrowAddress) throw new Error('escrowAddress required (market operator address)')
-  if (!Number.isFinite(amountUsdt) || amountUsdt <= 0) {
-    throw new Error('Stake must be a positive number of USDt')
-  }
-  const receipt = await fanWallet.sendUsdt(escrowAddress, amountUsdt)
+
   const evt = await record({
     type: 'bet-placed',
-    betId: 'bet_' + randomUUID().slice(0, 8),
+    betId,
     matchId,
     matchStage: m.stage,
     matchLabel: `${m.home} vs ${m.away}`,
-    outcome,
+    outcome: String(outcome).toLowerCase(),
     amount: amountUsdt,
-    from: receipt.from,
-    to: escrowAddress,
-    hash: receipt.hash,
-    status: receipt.status,
+    from: fanWallet.address,
+    to: process.env.PARIMUTUEL_MARKET_ADDRESS,
+    hash: tx.hash,
+    approvalHash: approvalReceipt?.hash ?? null,
+    status: receipt.status === 1 ? 'success' : 'reverted',
     blockNumber: receipt.blockNumber,
+    source: 'onchain',
   })
-  return { receipt, event: evt }
+  return { betId, receipt: { hash: tx.hash, status: 'success', blockNumber: receipt.blockNumber, from: fanWallet.address, amount: amountUsdt }, event: evt }
 }
 
-/// Compute market odds for a match. Returns per-outcome share and implied
-/// odds, purely from the current stake distribution in the journal.
+/// Snapshot the on-chain state for a single market.
 export async function marketState (matchId) {
   const m = getMatch(matchId)
   if (!m) throw new Error(`Unknown match: ${matchId}`)
-  const bets = (await list({ type: 'bet-placed', matchId }))
-    .filter(b => b.status === 'success')
-  let total = 0
-  const byOutcome = { home: 0, away: 0, draw: 0 }
-  for (const b of bets) {
-    total += Number(b.amount)
-    byOutcome[b.outcome] += Number(b.amount)
+  const provider = new ethers.JsonRpcProvider(process.env.RPC_URL || 'https://sepolia.base.org')
+  const on = bindOnChain(provider)
+
+  const raw = await on.market.markets(matchId)
+  const isOpen = raw.matchId && raw.matchId.length > 0
+  const total = Number(ethers.formatUnits(raw.totalStake, 6))
+  const stakeByOutcome = {
+    home: Number(ethers.formatUnits(raw.stakeHome, 6)),
+    away: Number(ethers.formatUnits(raw.stakeAway, 6)),
+    draw: Number(ethers.formatUnits(raw.stakeDraw, 6)),
   }
-  const odds = {}
+  const odds = { home: null, away: null, draw: null }
   for (const k of ['home', 'away', 'draw']) {
-    const stake = byOutcome[k]
-    odds[k] = stake > 0 ? total / stake : null
+    if (stakeByOutcome[k] > 0 && total > 0) odds[k] = total / stakeByOutcome[k]
   }
+
   return {
     matchId,
     matchLabel: `${m.home} vs ${m.away}`,
     status: m.status,
-    resultOutcome: m.resultOutcome,
-    resultScore: m.resultScore,
+    resultOutcome: raw.status === 1n ? OUTCOME_LABEL[Number(raw.winning)] : m.resultOutcome ?? null,
+    resultScore: m.resultScore ?? null,
     totalStakeUsdt: total,
-    betsCount: bets.length,
-    stakeByOutcome: byOutcome,
+    betsCount: 0, // derived from event indexing in a follow-up; not on the contract state
+    stakeByOutcome,
     odds,
+    onChain: isOpen,
   }
 }
 
-/// Settle a market. Reads the match result, computes each winning
-/// bettor's payout as (theirStake / totalWinningStake) * (netPool),
-/// and sends USDt back from the operator wallet. Non-winners lose
-/// their stake to the winning pool. Records one payout event per
-/// winner + a summary event so the whole settlement is greppable.
-export async function settleMarket (operatorWallet, matchId) {
-  const m = getMatch(matchId)
-  if (!m) throw new Error(`Unknown match: ${matchId}`)
-  if (m.status !== 'settled') {
-    throw new Error(`Match ${matchId} is not settled yet`)
-  }
-  const winningOutcome = m.resultOutcome
-
-  const bets = (await list({ type: 'bet-placed', matchId }))
-    .filter(b => b.status === 'success')
-
-  const totalStake = bets.reduce((s, b) => s + Number(b.amount), 0)
-  const winningBets = bets.filter(b => b.outcome === winningOutcome)
-  const winningStake = winningBets.reduce((s, b) => s + Number(b.amount), 0)
-
-  const platformFee = (totalStake * PLATFORM_FEE_BPS) / 10000
-  const netPool = totalStake - platformFee
-
-  const transfers = []
-  if (winningStake > 0) {
-    // Group by winner address so we send one tx per winner even if a
-    // single fan placed multiple bets on the same outcome.
-    const perWinner = new Map()
-    for (const b of winningBets) {
-      const share = (Number(b.amount) / winningStake) * netPool
-      perWinner.set(b.from, (perWinner.get(b.from) || 0) + share)
-    }
-    for (const [addr, amt] of perWinner) {
-      if (amt <= 0) continue
-      const receipt = await operatorWallet.sendUsdt(addr, amt)
-      const evt = await record({
-        type: 'bet-payout',
-        matchId,
-        winner: addr,
-        amount: amt,
-        hash: receipt.hash,
-        status: receipt.status,
-        blockNumber: receipt.blockNumber,
-      })
-      transfers.push(evt)
-    }
-  }
-  await record({
-    type: 'market-settled',
-    matchId,
-    matchLabel: `${m.home} vs ${m.away}`,
-    resultOutcome: winningOutcome,
-    resultScore: m.resultScore,
-    totalStakeUsdt: totalStake,
-    winningStakeUsdt: winningStake,
-    platformFeeUsdt: platformFee,
-    payouts: transfers.length,
-  })
-  return {
-    matchId,
-    totalStakeUsdt: totalStake,
-    winningStakeUsdt: winningStake,
-    platformFeeUsdt: platformFee,
-    netPoolUsdt: netPool,
-    payouts: transfers.length,
-  }
-}
-
-/// Convenience: snapshot of every market's current state, used by the
-/// dashboard to render the odds board.
 export async function snapshotAllMarkets () {
-  const matches = listMatches()
   const rows = []
-  for (const m of matches) {
+  for (const m of listMatches()) {
     rows.push(await marketState(m.id))
   }
   return rows
+}
+
+/// Oracle-only: settle a match on chain with the resulting outcome.
+export async function settleMarket (operatorWallet, matchId) {
+  const m = getMatch(matchId)
+  if (!m) throw new Error(`Unknown match: ${matchId}`)
+  if (m.status !== 'settled') throw new Error(`Match ${matchId} not settled yet in the schedule`)
+
+  const on = bindOnChain(operatorWallet.signer)
+  const tx = await on.market.settleMarket(matchId, outcomeToId(m.resultOutcome))
+  const receipt = await tx.wait()
+  const evt = await record({
+    type: 'market-settled',
+    matchId,
+    matchLabel: `${m.home} vs ${m.away}`,
+    resultOutcome: m.resultOutcome,
+    resultScore: m.resultScore,
+    hash: tx.hash,
+    status: receipt.status === 1 ? 'success' : 'reverted',
+    blockNumber: receipt.blockNumber,
+    source: 'onchain',
+  })
+  return { receipt: { hash: tx.hash, status: 'success', blockNumber: receipt.blockNumber }, event: evt, matchId, resultOutcome: m.resultOutcome }
+}
+
+/// A bettor claims their payout after settlement.
+export async function claimPayout (fanWallet, betId) {
+  const on = bindOnChain(fanWallet.signer)
+  const tx = await on.market.claimPayout(betId)
+  const receipt = await tx.wait()
+  const evt = await record({
+    type: 'bet-payout',
+    betId: Number(betId),
+    hash: tx.hash,
+    status: receipt.status === 1 ? 'success' : 'reverted',
+    blockNumber: receipt.blockNumber,
+    source: 'onchain',
+  })
+  return { receipt: { hash: tx.hash, status: 'success', blockNumber: receipt.blockNumber }, event: evt }
 }
