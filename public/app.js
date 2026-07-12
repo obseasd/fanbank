@@ -139,6 +139,9 @@ async function pendingLocalEvents () {
 }
 
 /* ─── Toasts ─── */
+let _toastSeq = 0
+const _toastRegistry = new Map()
+
 function toast ({ level = 'ok', title, desc, txHash, timeout = 5500 } = {}) {
   const host = $('#toasts')
   const el = document.createElement('div')
@@ -155,11 +158,20 @@ function toast ({ level = 'ok', title, desc, txHash, timeout = 5500 } = {}) {
     </div>
   `
   host.appendChild(el)
-  setTimeout(() => {
-    el.style.opacity = '0'
-    el.style.transform = 'translateX(20px)'
-    setTimeout(() => el.remove(), 260)
-  }, timeout)
+  const id = ++_toastSeq
+  const timer = setTimeout(() => dismissToast(id), timeout)
+  _toastRegistry.set(id, { el, timer })
+  return id
+}
+
+function dismissToast (id) {
+  const entry = _toastRegistry.get(id)
+  if (!entry) return
+  clearTimeout(entry.timer)
+  entry.el.style.opacity = '0'
+  entry.el.style.transform = 'translateX(20px)'
+  setTimeout(() => entry.el.remove(), 260)
+  _toastRegistry.delete(id)
 }
 
 /* ─── Wallet: injected provider detection + name ─── */
@@ -735,7 +747,16 @@ async function ensureAllowance (spender, amountRaw) {
 /// so callers can pass tx.hash to the audit journal + toast.
 async function clientTipTeam (teamId, amount) {
   if (CONNECTED.mode !== 'external') throw new Error('Not in external mode')
-  if (!CONFIG.contracts?.tipRouter) throw new Error('FanTipRouter address missing from /api/config')
+  const problems = []
+  if (!CONFIG.contracts?.tipRouter) problems.push('CONFIG.contracts.tipRouter')
+  if (!CONFIG.usdt?.address) problems.push('CONFIG.usdt.address')
+  if (!CONFIG.usdt?.decimals) problems.push('CONFIG.usdt.decimals')
+  if (!CONNECTED.signer) problems.push('CONNECTED.signer')
+  if (!teamId) problems.push('teamId')
+  if (problems.length) {
+    console.error('[fanbank] tipTeam preflight FAIL:', { problems, CONFIG, CONNECTED, teamId, amount })
+    throw new Error(`Missing values for tip: ${problems.join(', ')}. Hard refresh (Ctrl+Shift+R) and reconnect.`)
+  }
   const raw = ethers.parseUnits(String(amount), CONFIG.usdt.decimals)
   const approvalReceipt = await ensureAllowance(CONFIG.contracts.tipRouter, raw)
   const router = new ethers.Contract(CONFIG.contracts.tipRouter, TIP_ROUTER_ABI, CONNECTED.signer)
@@ -747,7 +768,20 @@ async function clientTipTeam (teamId, amount) {
 
 async function clientTipPlayer (teamId, playerName, amount) {
   if (CONNECTED.mode !== 'external') throw new Error('Not in external mode')
-  if (!CONFIG.contracts?.tipRouter) throw new Error('FanTipRouter address missing from /api/config')
+  // Defensive: if any of these are null the ethers Contract() will throw
+  // an opaque target=null. Fail fast with a clear message + console dump
+  // so a future regression is diagnosable in one glance at DevTools.
+  const problems = []
+  if (!CONFIG.contracts?.tipRouter) problems.push('CONFIG.contracts.tipRouter')
+  if (!CONFIG.usdt?.address) problems.push('CONFIG.usdt.address')
+  if (!CONFIG.usdt?.decimals) problems.push('CONFIG.usdt.decimals')
+  if (!CONNECTED.signer) problems.push('CONNECTED.signer')
+  if (!teamId) problems.push('teamId')
+  if (!playerName) problems.push('playerName')
+  if (problems.length) {
+    console.error('[fanbank] tipPlayer preflight FAIL:', { problems, CONFIG, CONNECTED, teamId, playerName, amount })
+    throw new Error(`Missing values for tip: ${problems.join(', ')}. Hard refresh (Ctrl+Shift+R) and reconnect.`)
+  }
   const raw = ethers.parseUnits(String(amount), CONFIG.usdt.decimals)
   const approvalReceipt = await ensureAllowance(CONFIG.contracts.tipRouter, raw)
   const router = new ethers.Contract(CONFIG.contracts.tipRouter, TIP_ROUTER_ABI, CONNECTED.signer)
@@ -921,9 +955,11 @@ async function submitTip () {
   if (!amount || amount <= 0) { hint.className = 'hint err'; hint.textContent = 'Amount must be positive.'; return }
 
   const btn = $('#tip-btn')
+  const originalBtnHTML = btn.innerHTML
   btn.disabled = true
+  btn.innerHTML = '<span class="btn-spinner"></span> Waiting for wallet...'
   hint.className = 'hint'
-  hint.textContent = 'Waiting for wallet…'
+  hint.textContent = 'Waiting for wallet...'
 
   try {
     await ensureConnected()
@@ -969,7 +1005,7 @@ async function submitTip () {
     hint.textContent = `Tipped ${fmtUsdt(amount)} to ${targetLabel}. Tx ${shortHash(receipt.hash)}.`
     toast({ level: 'ok', title: `Tipped ${fmtUsdt(amount)} to ${targetLabel}`, txHash: receipt.hash })
     $('#tip-amount').value = ''
-    await Promise.all([refreshConnectedBalances(), refreshStats(), refreshJournal()])
+    Promise.all([refreshConnectedBalances(), refreshStats(), refreshJournal()]).catch(() => {})
   } catch (e) {
     const msg = friendlyError(e)
     hint.className = 'hint err'
@@ -977,6 +1013,7 @@ async function submitTip () {
     toast({ level: 'err', title: 'Tip failed', desc: msg })
   } finally {
     btn.disabled = false
+    btn.innerHTML = originalBtnHTML
   }
 }
 
@@ -1024,12 +1061,20 @@ async function submitPool () {
   const policy = poolPolicyDD.getValue() || 'equal'
   const teamId = poolTeamDD.getValue() || null
   if (!purpose) return toast({ level: 'err', title: 'Pool needs a purpose' })
+
+  // Instant feedback: disable the button and show inline progress so the
+  // user knows the click was received. The server signs an on-chain
+  // createPool tx which can take 2-4s on Sepolia; without this the
+  // button looks dead until the toast pops.
+  const btn = $('#pool-create-btn')
+  const originalLabel = btn.textContent
+  btn.disabled = true
+  btn.innerHTML = '<span class="btn-spinner"></span> Opening pool...'
+  const toastId = toast({ level: 'ok', title: 'Opening pool...', desc: purpose, timeout: 30_000 })
+
   try {
     const r = await api('/api/pool/create', { method: 'POST', body: { teamId, purpose, policy } })
     $('#pool-purpose').value = ''
-    // Mirror the pool creation into the local journal so refresh + cold
-    // Lambda instance do not swallow the pool. Uses a synthetic hash
-    // because pool creation is off-chain and has no tx.
     pushClientEvent({
       type: 'pool-created',
       poolId: r.poolId,
@@ -1039,10 +1084,16 @@ async function submitPool () {
       policy,
       hash: 'local:pool:' + r.poolId,
     })
+    dismissToast(toastId)
     toast({ level: 'ok', title: 'Pool opened', desc: purpose })
-    await Promise.all([refreshPools(), refreshJournal()])
+    // Non-blocking refresh so the toast + button reset feel instant.
+    Promise.all([refreshPools(), refreshJournal()]).catch(() => {})
   } catch (e) {
-    toast({ level: 'err', title: 'Pool creation failed', desc: e.message })
+    dismissToast(toastId)
+    toast({ level: 'err', title: 'Pool creation failed', desc: friendlyError(e) })
+  } finally {
+    btn.disabled = false
+    btn.textContent = originalLabel
   }
 }
 
@@ -1574,20 +1625,34 @@ async function settleDemoDialog (matchId) {
     submit: 'Settle market',
   })
   if (!values) return
+  const toastId = toast({ level: 'ok', title: 'Settling market...', desc: `${home?.name || match.home} vs ${away?.name || match.away}`, timeout: 30_000 })
   try {
-    // Replay any locally-cached bets to the server first, so the
-    // settle sees a full stake pool instead of a stale slice.
     await syncLocalBetsToServer(matchId)
     await api(`/api/match/${matchId}/settle-demo`, { method: 'POST', body: {
       outcome: values.outcome,
       score: values.score && values.score.trim() ? values.score.trim() : null,
     } })
     const r = await api(`/api/market/${matchId}/settle`, { method: 'POST' })
+    dismissToast(toastId)
     toast({ level: 'ok', title: 'Market settled', desc: `${r.payouts} payouts, ${fmtUsdt(r.netPoolUsdt)} distributed` })
-    await Promise.all([refreshConnectedBalances(), refreshStats(), refreshMarkets(), refreshJournal()])
   } catch (e) {
-    toast({ level: 'err', title: 'Settle failed', desc: e.message })
+    dismissToast(toastId)
+    const msg = String(e?.message || '')
+    // Contract already settled: NOT a hard error. The state we wanted
+    // is already what the chain has. Toast an info message and force a
+    // schedule reload so the UI catches up with the on-chain truth.
+    if (/already settled/i.test(msg)) {
+      toast({ level: 'ok', title: 'Market already settled', desc: 'On-chain result already recorded. Refreshing view.' })
+    } else {
+      toast({ level: 'err', title: 'Settle failed', desc: friendlyError(e) })
+      return
+    }
   }
+  // Always reload matches so the UI reflects the new status. Without
+  // this, MATCHES stays with status="scheduled" and the row keeps its
+  // Settle demo button, so a second click hits "already settled".
+  await loadMatches().catch(() => {})
+  await Promise.all([refreshConnectedBalances(), refreshStats(), refreshMarkets(), refreshJournal()])
 }
 
 /* ─── Journal ─── */

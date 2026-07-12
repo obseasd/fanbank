@@ -1164,6 +1164,19 @@ section, header, footer, main { position: relative; z-index: 1; }
 .empty-state .empty-title { font-size: 14px; font-weight: 600; color: var(--fg); }
 .empty-state .empty-desc { font-size: 13px; max-width: 44ch; line-height: 1.5; }
 
+.btn-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: fb-spin 0.7s linear infinite;
+}
+@keyframes fb-spin { to { transform: rotate(360deg); } }
+
 .tip-mode-switch {
   display: grid;
   grid-template-columns: 1fr 1fr;
